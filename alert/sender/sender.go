@@ -39,6 +39,9 @@ func NewSender(key string, tpls map[string]*template.Template, smtp aconf.SMTPCo
 		return &MmSender{tpl: tpls[models.Mm]}
 	case models.Telegram:
 		return &TelegramSender{tpl: tpls[models.Telegram]}
+	case models.WecomApp:
+		return &WecomAppSender{tpl: tpls[models.WecomApp]}
+
 	}
 	return nil
 }

@@ -90,6 +90,7 @@ func (e *Dispatch) relaodTpls() error {
 		models.Mm:         sender.NewSender(models.Mm, tmpTpls, smtp),
 		models.Telegram:   sender.NewSender(models.Telegram, tmpTpls, smtp),
 		models.FeishuCard: sender.NewSender(models.FeishuCard, tmpTpls, smtp),
+		models.WecomApp:   sender.NewSender(models.WecomApp, tmpTpls, smtp),
 	}
 
 	e.RwLock.RLock()

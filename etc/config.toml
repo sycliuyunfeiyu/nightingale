@@ -145,7 +145,7 @@ BasicAuthUser = ""
 # Basic auth password
 BasicAuthPass = ""
 # timeout settings, unit: ms
-Headers = ["X-From", "n9e"]
+Headers = ["X-From", "n9e"]bs
 Timeout = 10000
 DialTimeout = 3000
 TLSHandshakeTimeout = 30000

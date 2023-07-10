@@ -28,6 +28,7 @@ const (
 	Telegram     = "telegram"
 	Email        = "email"
 	EmailSubject = "mailsubject"
+	WecomApp     = "wecomApp"
 
 	DingtalkKey = "dingtalk_robot_token"
 	WecomKey    = "wecom_robot_token"
