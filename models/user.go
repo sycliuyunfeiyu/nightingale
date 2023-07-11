@@ -35,10 +35,11 @@ const (
 	FeishuKey   = "feishu_robot_token"
 	MmKey       = "mm_webhook_url"
 	TelegramKey = "telegram_robot_token"
+	WecomAppKey = "wecomapp_robot_token"
 )
 
 var (
-	DefaultChannels = []string{Dingtalk, Wecom, Feishu, Mm, Telegram, Email, FeishuCard}
+	DefaultChannels = []string{Dingtalk, Wecom, Feishu, Mm, Telegram, Email, FeishuCard, WecomApp}
 )
 
 type User struct {
@@ -628,6 +629,10 @@ func (u *User) ExtractToken(key string) (string, bool) {
 		return ret.String(), ret.Exists()
 	case Email:
 		return u.Email, u.Email != ""
+	case WecomApp:
+		ret := gjson.GetBytes(bs, WecomAppKey)
+		return ret.String(), ret.Exists()
+
 	default:
 		return "", false
 	}
