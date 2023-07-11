@@ -82,10 +82,13 @@ func (wa *WecomAppSender) extract(users []*models.User, content string) []map[st
 
 			json.Unmarshal([]byte(userJson), &wecomAppT)
 			accessToken, err := wa.getAccessToken(&wecomAppT, false)
+
 			if err != nil {
 				fmt.Println("获取getAccessToken： " + err.Error())
 				logger.Error("获取getAccessToken： " + err.Error())
 			}
+			logger.Infof("已获取AccessToken" + accessToken)
+
 			wecomAppPostTempStr := fmt.Sprintf(wecomAppPostTemp, wecomAppT.Name, content)
 
 			url = "https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token=" + accessToken
@@ -134,6 +137,8 @@ func (wa *WecomAppSender) getAccessToken(wat *wecomAppToken, retToken bool) (str
 	//}
 
 	if accessToken, err := tools.RedisClient.Get(ctx, wat.Corpsecret).Result(); err == redis.Nil || retToken {
+		logger.Infof("没有找到reids缓存的accessToken，正在重新获取。。。")
+
 		// 重新获取
 		//https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=ID&corpsecret=SECRET
 		getAccessTokenUrl := fmt.Sprintf("https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=%s&corpsecret=%s", wat.Corpid, wat.Corpsecret)
@@ -159,6 +164,8 @@ func (wa *WecomAppSender) getAccessToken(wat *wecomAppToken, retToken bool) (str
 		fmt.Println("企业微信应用链接redis失败 " + err.Error())
 		return "", err
 	} else {
+		logger.Infof("命中accessToken缓存，正在返回。。。")
+
 		return accessToken, nil
 	}
 
