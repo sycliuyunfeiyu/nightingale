@@ -154,6 +154,7 @@ func (wa *WecomAppSender) getAccessToken(wat *wecomAppToken, retToken bool) (str
 		if err != nil {
 			return "", err
 		}
+		fmt.Println(string(body))
 		err = json.Unmarshal(body, &atr)
 		if err != nil {
 			return "", err
