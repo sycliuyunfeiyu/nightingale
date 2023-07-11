@@ -75,7 +75,7 @@ func (wa *WecomAppSender) extract(users []*models.User, content string) []map[st
 			wecomAppPostTempStr := fmt.Sprintf(wecomAppPostTemp, wecomAppT.Name, content)
 
 			if !strings.HasPrefix(wecomAppT.Token, "https://") {
-				url = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=" + wecomAppT.Token
+				url = "https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token=" + wecomAppT.Token
 			}
 
 			urlPostList = append(urlPostList, map[string]string{"url": url, "msg": wecomAppPostTempStr})
