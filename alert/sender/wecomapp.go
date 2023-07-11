@@ -106,7 +106,7 @@ func (was *WecomAppSender) doSend(url string, body string, wecomAccessToken stri
 	var errCode errCodeJosn
 	res, code, err := poster.PostJSON(url, time.Second*5, body, 3)
 	errJson := json.Unmarshal(res, &errCode)
-	if errJson != nil && errCode.errcode != 0 {
+	if errJson != nil || errCode.errcode != 0 {
 		var wecomAppT wecomAppToken
 
 		json.Unmarshal([]byte(wecomAccessToken), &wecomAppT)
