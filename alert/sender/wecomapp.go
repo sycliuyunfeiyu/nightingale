@@ -100,15 +100,15 @@ func (wa *WecomAppSender) extract(users []*models.User, content string) []map[st
 
 func (was *WecomAppSender) doSend(url string, body string, wecomAccessToken string) {
 	type errCodeJosn struct {
-		errcode int    `json:"errcode"`
-		errmsg  string `json:"errmsg"`
+		Errcode int    `json:"errcode"`
+		Errmsg  string `json:"errmsg"`
 	}
 	var errCode errCodeJosn
 	res, code, err := poster.PostJSON(url, time.Second*5, body, 3)
 	errJson := json.Unmarshal(res, &errCode)
 	fmt.Println("=======errCode.errcode=======\n" + string(res))
 
-	if errJson != nil || errCode.errcode != 0 {
+	if errJson != nil || errCode.Errcode != 0 {
 		var wecomAppT wecomAppToken
 
 		json.Unmarshal([]byte(wecomAccessToken), &wecomAppT)
@@ -126,11 +126,17 @@ func (was *WecomAppSender) doSend(url string, body string, wecomAccessToken stri
 func (wa *WecomAppSender) getAccessToken(wat *wecomAppToken, retToken bool) (string, error) {
 	ctx := context.Background()
 	type accessTokenResp struct {
-		errcode      int    `json:"errcode"`
-		errmsg       string `json:"errmsg"`
-		access_token string `json:"access_token"`
-		expires_in   int    `json:"expires_in"`
+		Errcode      int    `json:"errcode"`
+		Errmsg       string `json:"errmsg"`
+		Access_token string `json:"access_token"`
+		Expires_in   int    `json:"expires_in"`
 	}
+	//{
+	//	"errcode": 0,
+	//	"errmsg": "ok",
+	//	"access_token": "accesstoken000001",
+	//	"expires_in": 7200
+	//}
 
 	if accessToken, err := tools.RedisClient.Get(ctx, wat.Corpsecret).Result(); err == redis.Nil || retToken {
 		logger.Infof("没有找到reids缓存的accessToken，正在重新获取。。。")
@@ -152,8 +158,8 @@ func (wa *WecomAppSender) getAccessToken(wat *wecomAppToken, retToken bool) (str
 		if err != nil {
 			return "", err
 		}
-		tools.RedisClient.Set(ctx, wat.Corpsecret, atr.access_token, time.Duration(atr.expires_in)*time.Second)
-		return atr.access_token, nil
+		tools.RedisClient.Set(ctx, wat.Corpsecret, atr.Access_token, time.Duration(atr.Expires_in)*time.Second)
+		return atr.Access_token, nil
 
 	} else if err != nil {
 		logger.Errorf("企业微信应用链接redis失败 " + err.Error())
