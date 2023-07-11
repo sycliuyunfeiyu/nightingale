@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"github.com/ccfos/nightingale/v6/tools"
 	"log"
 	"os"
 	"os/signal"
@@ -35,6 +36,7 @@ func main() {
 	if err != nil {
 		log.Fatalln("failed to initialize:", err)
 	}
+	tools.InitTools(*configDir, *cryptoKey)
 
 	code := 1
 	sc := make(chan os.Signal, 1)
