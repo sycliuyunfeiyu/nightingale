@@ -106,6 +106,8 @@ func (was *WecomAppSender) doSend(url string, body string, wecomAccessToken stri
 	var errCode errCodeJosn
 	res, code, err := poster.PostJSON(url, time.Second*5, body, 3)
 	errJson := json.Unmarshal(res, &errCode)
+	fmt.Println("=======errCode.errcode=======\n" + string(res))
+
 	if errJson != nil || errCode.errcode != 0 {
 		var wecomAppT wecomAppToken
 
@@ -129,12 +131,6 @@ func (wa *WecomAppSender) getAccessToken(wat *wecomAppToken, retToken bool) (str
 		access_token string `json:"access_token"`
 		expires_in   int    `json:"expires_in"`
 	}
-	//{
-	//	"errcode": 0,
-	//	"errmsg": "ok",
-	//	"access_token": "accesstoken000001",
-	//	"expires_in": 7200
-	//}
 
 	if accessToken, err := tools.RedisClient.Get(ctx, wat.Corpsecret).Result(); err == redis.Nil || retToken {
 		logger.Infof("没有找到reids缓存的accessToken，正在重新获取。。。")
