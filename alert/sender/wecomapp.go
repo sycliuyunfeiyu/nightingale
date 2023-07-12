@@ -32,6 +32,7 @@ type wecomAppToken struct {
 	//Token  string `json:"token"`
 	Corpid     string `json:"corpid"`
 	Corpsecret string `json:"corpsecret"`
+	Agentid    string `json:"agentid"`
 }
 
 type WecomAppSender struct {
@@ -65,7 +66,7 @@ func (wa *WecomAppSender) extract(users []*models.User, content string) []map[st
 				"toparty" : "",
 				"totag" : "",
 				"msgtype" : "markdown",
-				"agentid" : 1,
+				"agentid" : %s,
 				"text" : {
 				"content" : "%s"
 			},
@@ -89,7 +90,7 @@ func (wa *WecomAppSender) extract(users []*models.User, content string) []map[st
 			}
 			logger.Infof("已获取AccessToken" + accessToken)
 
-			wecomAppPostTempStr := fmt.Sprintf(wecomAppPostTemp, wecomAppT.Name, content)
+			wecomAppPostTempStr := fmt.Sprintf(wecomAppPostTemp, wecomAppT.Name, wecomAppT.Agentid, content)
 			fmt.Println("===========" + wecomAppPostTempStr)
 
 			url = "https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token=" + accessToken
