@@ -43,7 +43,7 @@ type wecomAppPostTemp struct {
 	Agentid int    `json:"agentid"`
 	Text    struct {
 		Content string `json:"content"`
-	} `json:"text"`
+	} `json:"markdown"`
 	Safe                     int `json:"safe"`
 	Enable_id_trans          int `json:"enable_id_trans"`
 	Enable_duplicate_check   int `json:"enable_duplicate_check"`
