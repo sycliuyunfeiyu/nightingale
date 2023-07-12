@@ -32,7 +32,22 @@ type wecomAppToken struct {
 	//Token  string `json:"token"`
 	Corpid     string `json:"corpid"`
 	Corpsecret string `json:"corpsecret"`
-	Agentid    string `json:"agentid"`
+	Agentid    int    `json:"agentid"`
+}
+
+type wecomAppPostTemp struct {
+	Touser  string `json:"touser"`
+	Toparty string `json:"toparty"`
+	Totag   string `json:"totag"`
+	Msgtype string `json:"msgtype"`
+	Agentid int    `json:"agentid"`
+	Text    struct {
+		Content string `json:"content"`
+	} `json:"text"`
+	Safe                     int `json:"safe"`
+	Enable_id_trans          int `json:"enable_id_trans"`
+	Enable_duplicate_check   int `json:"enable_duplicate_check"`
+	Duplicate_check_interval int `json:"duplicate_check_interval"`
 }
 
 type WecomAppSender struct {
@@ -55,29 +70,13 @@ func (wa *WecomAppSender) Send(ctx MessageContext) {
 
 }
 
-//https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=ID&corpsecret=SECRET
-
 func (wa *WecomAppSender) extract(users []*models.User, content string) []map[string]string {
 
 	urlPostList := make([]map[string]string, 0, len(users))
 
-	wecomAppPostTemp := `{
-				"touser" : "%s",
-				"toparty" : "",
-				"totag" : "",
-				"msgtype" : "markdown",
-				"agentid" : %s,
-				"text" : {
-				"content" : "%s"
-			},
-				"safe":0,
-				"enable_id_trans": 0,
-				"enable_duplicate_check": 0,
-				"duplicate_check_interval": 1800
-			}`
 	for _, user := range users {
 		var url string
-
+		var wecomAppPost wecomAppPostTemp
 		if userJson, has := user.ExtractToken(models.WecomApp); has {
 			var wecomAppT wecomAppToken
 
@@ -90,11 +89,19 @@ func (wa *WecomAppSender) extract(users []*models.User, content string) []map[st
 			}
 			logger.Infof("已获取AccessToken" + accessToken)
 
-			wecomAppPostTempStr := fmt.Sprintf(wecomAppPostTemp, wecomAppT.Name, wecomAppT.Agentid, content)
-			fmt.Println("===========" + wecomAppPostTempStr)
+			wecomAppPost.Duplicate_check_interval = 1800
+			wecomAppPost.Enable_duplicate_check = 0
+			wecomAppPost.Enable_id_trans = 0
+			wecomAppPost.Safe = 0
+			wecomAppPost.Touser = wecomAppT.Name
+			wecomAppPost.Msgtype = "markdown"
+			wecomAppPost.Agentid = wecomAppT.Agentid
+			wecomAppPost.Text.Content = content
+
+			wecomAppPostTempStr, _ := json.Marshal(wecomAppPost)
 
 			url = "https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token=" + accessToken
-			urlPostList = append(urlPostList, map[string]string{"url": url, "msg": wecomAppPostTempStr, "wecomAccessToken": userJson})
+			urlPostList = append(urlPostList, map[string]string{"url": url, "msg": string(wecomAppPostTempStr), "wecomAccessToken": userJson})
 		}
 	}
 	return urlPostList
