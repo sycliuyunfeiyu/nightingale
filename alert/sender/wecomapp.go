@@ -90,6 +90,7 @@ func (wa *WecomAppSender) extract(users []*models.User, content string) []map[st
 			logger.Infof("已获取AccessToken" + accessToken)
 
 			wecomAppPostTempStr := fmt.Sprintf(wecomAppPostTemp, wecomAppT.Name, content)
+			fmt.Println("===========" + wecomAppPostTempStr)
 
 			url = "https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token=" + accessToken
 			urlPostList = append(urlPostList, map[string]string{"url": url, "msg": wecomAppPostTempStr, "wecomAccessToken": userJson})
