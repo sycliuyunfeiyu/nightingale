@@ -20,6 +20,7 @@ const (
 	HOST   = "host"
 
 	PROMETHEUS = "prometheus"
+	ELASTIC    = "elastic"
 )
 
 type AlertRule struct {

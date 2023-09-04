@@ -56,11 +56,11 @@ type WecomAppSender struct {
 
 func (wa *WecomAppSender) Send(ctx MessageContext) {
 
-	if len(ctx.Users) == 0 || ctx.Rule == nil || ctx.Event == nil {
+	if len(ctx.Users) == 0 || ctx.Rule == nil || ctx.Events == nil {
 		return
 	}
 
-	message := BuildTplMessage(wa.tpl, ctx.Event)
+	message := BuildTplMessage(wa.tpl, ctx.Events)
 	urlPostList := wa.extract(ctx.Users, message)
 
 	for _, urlPostMap := range urlPostList {

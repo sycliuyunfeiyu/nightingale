@@ -3,7 +3,6 @@ package center
 import (
 	"context"
 	"fmt"
-
 	"github.com/ccfos/nightingale/v6/alert"
 	"github.com/ccfos/nightingale/v6/alert/astats"
 	"github.com/ccfos/nightingale/v6/alert/process"
@@ -79,6 +78,7 @@ func Initialize(configDir string, cryptoKey string) (func(), error) {
 	userGroupCache := memsto.NewUserGroupCache(ctx, syncStats)
 
 	promClients := prom.NewPromClient(ctx, config.Alert.Heartbeat)
+	//elasticClients := elastic.NewElasticClient(ctx, config.Alert.Heartbeat)
 
 	externalProcessors := process.NewExternalProcessors()
 	alert.Start(config.Alert, config.Pushgw, syncStats, alertStats, externalProcessors, targetCache, busiGroupCache, alertMuteCache, alertRuleCache, notifyConfigCache, dsCache, ctx, promClients, userCache, userGroupCache)
