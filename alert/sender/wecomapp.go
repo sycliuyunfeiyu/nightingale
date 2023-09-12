@@ -65,14 +65,14 @@ func (wa *WecomAppSender) Send(ctx MessageContext) {
 
 	for _, urlPostMap := range urlPostList {
 
-		wa.doSend(urlPostMap["url"], urlPostMap["msg"], urlPostMap["wecomAccessToken"])
+		wa.doSend(urlPostMap["url"].(string), urlPostMap["msg"], urlPostMap["wecomAccessToken"].(string))
 	}
 
 }
 
-func (wa *WecomAppSender) extract(users []*models.User, content string) []map[string]string {
+func (wa *WecomAppSender) extract(users []*models.User, content string) []map[string]interface{} {
 
-	urlPostList := make([]map[string]string, 0, len(users))
+	urlPostList := make([]map[string]interface{}, 0, len(users))
 
 	for _, user := range users {
 		var url string
@@ -99,17 +99,18 @@ func (wa *WecomAppSender) extract(users []*models.User, content string) []map[st
 			wecomAppPost.Text.Content = content
 
 			wecomAppPostTempStr, _ := json.Marshal(wecomAppPost)
-
 			fmt.Println(string(wecomAppPostTempStr))
 
 			url = "https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token=" + accessToken
-			urlPostList = append(urlPostList, map[string]string{"url": url, "msg": string(wecomAppPostTempStr), "wecomAccessToken": userJson})
+
+			urlPostList = append(urlPostList, map[string]interface{}{"url": url, "msg": wecomAppPost, "wecomAccessToken": userJson})
+
 		}
 	}
 	return urlPostList
 }
 
-func (was *WecomAppSender) doSend(url string, body string, wecomAccessToken string) {
+func (was *WecomAppSender) doSend(url string, body interface{}, wecomAccessToken string) {
 	type errCodeJosn struct {
 		Errcode int    `json:"errcode"`
 		Errmsg  string `json:"errmsg"`
