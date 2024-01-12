@@ -41,6 +41,54 @@ func SendCallbacks(ctx *ctx.Context, urls []string, event *models.AlertCurEvent,
 		}
 	}
 }
+func SendCallbacks_cloud(ctx *ctx.Context, urls []string, event *models.AlertCurEvent, targetCache *memsto.TargetCacheType, userCache *memsto.UserCacheType, ibexConf aconf.Ibex) {
+	var CloudData struct {
+		Content        string `json:"content"`
+		Level          int    `json:"level"`
+		Start_time     string `json:"start_time"`
+		Aggregation_id string `json:"aggregation_id"`
+		Event_id       string `json:"event_id"`
+		Event_type     string `json:"event_type"`
+	}
+	for _, url := range urls {
+		if url == "" {
+			continue
+		}
+		//CloudData
+		if event.Severity > 1 {
+			CloudData.Level = event.Severity + 1
+		} else {
+			CloudData.Level = event.Severity
+		}
+		CloudData.Content = "规则名称：" + event.RuleName + "规则备注：" + event.RuleNote
+		if event.IsRecovered {
+			CloudData.Event_type = "recover"
+		} else {
+			CloudData.Event_type = "occurs"
+		}
+		CloudData.Event_id = event.Hash
+		CloudData.Aggregation_id = event.Hash
+
+		CloudData.Start_time = time.Unix(event.FirstTriggerTime, 0).Format("2006-01-02 15:04:05")
+		//if strings.HasPrefix(url, "${ibex}") {
+		//	if !event.IsRecovered {
+		//		handleIbex(ctx, url, event, targetCache, userCache, ibexConf)
+		//	}
+		//	continue
+		//}
+
+		if !(strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://")) {
+			url = "http://" + url
+		}
+
+		resp, code, err := poster.PostJSON(url, 5*time.Second, CloudData, 3)
+		if err != nil {
+			logger.Errorf("event_callback_fail(rule_id=%d url=%s), resp: %s, err: %v, code: %d", event.RuleId, url, string(resp), err, code)
+		} else {
+			logger.Infof("event_callback_succ(rule_id=%d url=%s), resp: %s, code: %d", event.RuleId, url, string(resp), code)
+		}
+	}
+}
 
 type TaskForm struct {
 	Title     string   `json:"title"`

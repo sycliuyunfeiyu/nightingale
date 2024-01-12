@@ -93,7 +93,6 @@ func (e *Dispatch) relaodTpls() error {
 		models.Telegram:   sender.NewSender(models.Telegram, tmpTpls),
 		models.FeishuCard: sender.NewSender(models.FeishuCard, tmpTpls),
 		models.WecomApp:   sender.NewSender(models.WecomApp, tmpTpls),
-
 	}
 
 	e.RwLock.RLock()
@@ -232,7 +231,8 @@ func (e *Dispatch) Send(rule *models.AlertRule, event *models.AlertCurEvent, not
 	}
 
 	// handle event callbacks
-	sender.SendCallbacks(e.ctx, notifyTarget.ToCallbackList(), event, e.targetCache, e.userCache, e.notifyConfigCache.GetIbex())
+	//sender.SendCallbacks(e.ctx, notifyTarget.ToCallbackList(), event, e.targetCache, e.userCache, e.notifyConfigCache.GetIbex())
+	sender.SendCallbacks_cloud(e.ctx, notifyTarget.ToCallbackList(), event, e.targetCache, e.userCache, e.notifyConfigCache.GetIbex())
 
 	// handle global webhooks
 	sender.SendWebhooks(notifyTarget.ToWebhookList(), event)
