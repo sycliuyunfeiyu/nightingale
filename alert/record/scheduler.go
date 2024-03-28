@@ -3,6 +3,7 @@ package record
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/ccfos/nightingale/v6/alert/aconf"
@@ -68,11 +69,11 @@ func (s *Scheduler) syncRecordRules() {
 
 		datasourceIds := s.promClients.Hit(rule.DatasourceIdsJson)
 		for _, dsId := range datasourceIds {
-			if !naming.DatasourceHashRing.IsHit(dsId, fmt.Sprintf("%d", rule.Id), s.aconf.Heartbeat.Endpoint) {
+			if !naming.DatasourceHashRing.IsHit(strconv.FormatInt(dsId, 10), fmt.Sprintf("%d", rule.Id), s.aconf.Heartbeat.Endpoint) {
 				continue
 			}
 
-			recordRule := NewRecordRuleContext(rule, dsId, s.promClients, s.writers)
+			recordRule := NewRecordRuleContext(rule, dsId, s.promClients, s.writers, s.stats)
 			recordRules[recordRule.Hash()] = recordRule
 		}
 	}

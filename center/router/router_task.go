@@ -30,10 +30,50 @@ func (rt *Router) taskGets(c *gin.Context) {
 
 	beginTime := time.Now().Unix() - days*24*3600
 
-	total, err := models.TaskRecordTotal(rt.Ctx, bgid, beginTime, creator, query)
+	total, err := models.TaskRecordTotal(rt.Ctx, []int64{bgid}, beginTime, creator, query)
 	ginx.Dangerous(err)
 
-	list, err := models.TaskRecordGets(rt.Ctx, bgid, beginTime, creator, query, limit, ginx.Offset(c, limit))
+	list, err := models.TaskRecordGets(rt.Ctx, []int64{bgid}, beginTime, creator, query, limit, ginx.Offset(c, limit))
+	ginx.Dangerous(err)
+
+	ginx.NewRender(c).Data(gin.H{
+		"total": total,
+		"list":  list,
+	}, nil)
+}
+
+func (rt *Router) taskGetsByGids(c *gin.Context) {
+	gids := str.IdsInt64(ginx.QueryStr(c, "gids", ""), ",")
+	if len(gids) > 0 {
+		for _, gid := range gids {
+			rt.bgroCheck(c, gid)
+		}
+	} else {
+		me := c.MustGet("user").(*models.User)
+		if !me.IsAdmin() {
+			var err error
+			gids, err = models.MyBusiGroupIds(rt.Ctx, me.Id)
+			ginx.Dangerous(err)
+		}
+	}
+
+	mine := ginx.QueryBool(c, "mine", false)
+	days := ginx.QueryInt64(c, "days", 7)
+	limit := ginx.QueryInt(c, "limit", 20)
+	query := ginx.QueryStr(c, "query", "")
+	user := c.MustGet("user").(*models.User)
+
+	creator := ""
+	if mine {
+		creator = user.Username
+	}
+
+	beginTime := time.Now().Unix() - days*24*3600
+
+	total, err := models.TaskRecordTotal(rt.Ctx, gids, beginTime, creator, query)
+	ginx.Dangerous(err)
+
+	list, err := models.TaskRecordGets(rt.Ctx, gids, beginTime, creator, query, limit, ginx.Offset(c, limit))
 	ginx.Dangerous(err)
 
 	ginx.NewRender(c).Data(gin.H{
@@ -92,6 +132,7 @@ func (f *taskForm) Verify() error {
 	if f.Script == "" {
 		return fmt.Errorf("arg(script) is required")
 	}
+	f.Script = strings.Replace(f.Script, "\r\n", "\n", -1)
 
 	if str.Dangerous(f.Args) {
 		return fmt.Errorf("arg(args) is dangerous")

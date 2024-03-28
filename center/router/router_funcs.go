@@ -44,6 +44,10 @@ func (rt *Router) statistic(c *gin.Context) {
 		statistics, err = models.DatasourceStatistics(rt.Ctx)
 		ginx.NewRender(c).Data(statistics, err)
 		return
+	case "user_variable":
+		statistics, err = models.ConfigsUserVariableStatistics(rt.Ctx)
+		ginx.NewRender(c).Data(statistics, err)
+		return
 	default:
 		ginx.Bomb(http.StatusBadRequest, "invalid name")
 	}
@@ -65,7 +69,8 @@ func queryDatasourceIds(c *gin.Context) []int64 {
 }
 
 type idsForm struct {
-	Ids []int64 `json:"ids"`
+	Ids               []int64 `json:"ids"`
+	IsSyncToFlashDuty bool    `json:"is_sync_to_flashduty"`
 }
 
 func (f idsForm) Verify() {
@@ -153,4 +158,13 @@ func TaskCreate(v interface{}, ibexc aconf.Ibex) (int64, error) {
 	}
 
 	return res.Dat, nil
+}
+
+func Username(c *gin.Context) string {
+	username := c.GetString(gin.AuthUserKey)
+	if username == "" {
+		user := c.MustGet("user").(*models.User)
+		username = user.Username
+	}
+	return username
 }

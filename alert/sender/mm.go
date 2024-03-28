@@ -4,10 +4,9 @@ import (
 	"html/template"
 	"net/url"
 	"strings"
-	"time"
 
+	"github.com/ccfos/nightingale/v6/alert/astats"
 	"github.com/ccfos/nightingale/v6/models"
-	"github.com/ccfos/nightingale/v6/pkg/poster"
 
 	"github.com/toolkits/pkg/logger"
 )
@@ -15,6 +14,7 @@ import (
 type MatterMostMessage struct {
 	Text   string
 	Tokens []string
+	Stats  *astats.Stats
 }
 
 type mm struct {
@@ -36,11 +36,12 @@ func (ms *MmSender) Send(ctx MessageContext) {
 	if len(urls) == 0 {
 		return
 	}
-	message := BuildTplMessage(ms.tpl, ctx.Events)
+	message := BuildTplMessage(models.Mm, ms.tpl, ctx.Events)
 
 	SendMM(MatterMostMessage{
 		Text:   message,
 		Tokens: urls,
+		Stats:  ctx.Stats,
 	})
 }
 
@@ -87,13 +88,7 @@ func SendMM(message MatterMostMessage) {
 				Username: username,
 				Text:     txt + message.Text,
 			}
-
-			res, code, err := poster.PostJSON(ur, time.Second*5, body, 3)
-			if err != nil {
-				logger.Errorf("mm_sender: result=fail url=%s code=%d error=%v response=%s", ur, code, err, string(res))
-			} else {
-				logger.Infof("mm_sender: result=succ url=%s code=%d response=%s", ur, code, string(res))
-			}
+			doSend(ur, body, models.Mm, message.Stats)
 		}
 	}
 }

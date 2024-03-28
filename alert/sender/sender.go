@@ -5,6 +5,7 @@ import (
 	"html/template"
 
 	"github.com/ccfos/nightingale/v6/alert/aconf"
+	"github.com/ccfos/nightingale/v6/alert/astats"
 	"github.com/ccfos/nightingale/v6/memsto"
 	"github.com/ccfos/nightingale/v6/models"
 )
@@ -20,6 +21,7 @@ type (
 		Users  []*models.User
 		Rule   *models.AlertRule
 		Events []*models.AlertCurEvent
+		Stats  *astats.Stats
 	}
 )
 
@@ -46,20 +48,21 @@ func NewSender(key string, tpls map[string]*template.Template, smtp ...aconf.SMT
 	return nil
 }
 
-func BuildMessageContext(rule *models.AlertRule, events []*models.AlertCurEvent, uids []int64, userCache *memsto.UserCacheType) MessageContext {
+func BuildMessageContext(rule *models.AlertRule, events []*models.AlertCurEvent, uids []int64, userCache *memsto.UserCacheType, stats *astats.Stats) MessageContext {
 	users := userCache.GetByUserIds(uids)
 	return MessageContext{
 		Rule:   rule,
 		Events: events,
 		Users:  users,
+		Stats:  stats,
 	}
 }
 
-type BuildTplMessageFunc func(tpl *template.Template, events []*models.AlertCurEvent) string
+type BuildTplMessageFunc func(channel string, tpl *template.Template, events []*models.AlertCurEvent) string
 
 var BuildTplMessage BuildTplMessageFunc = buildTplMessage
 
-func buildTplMessage(tpl *template.Template, events []*models.AlertCurEvent) string {
+func buildTplMessage(channel string, tpl *template.Template, events []*models.AlertCurEvent) string {
 	if tpl == nil {
 		return "tpl for current sender not found, please check configuration"
 	}

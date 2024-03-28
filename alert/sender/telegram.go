@@ -3,10 +3,9 @@ package sender
 import (
 	"html/template"
 	"strings"
-	"time"
 
+	"github.com/ccfos/nightingale/v6/alert/astats"
 	"github.com/ccfos/nightingale/v6/models"
-	"github.com/ccfos/nightingale/v6/pkg/poster"
 
 	"github.com/toolkits/pkg/logger"
 )
@@ -14,6 +13,7 @@ import (
 type TelegramMessage struct {
 	Text   string
 	Tokens []string
+	Stats  *astats.Stats
 }
 
 type telegram struct {
@@ -30,11 +30,12 @@ func (ts *TelegramSender) Send(ctx MessageContext) {
 		return
 	}
 	tokens := ts.extract(ctx.Users)
-	message := BuildTplMessage(ts.tpl, ctx.Events)
+	message := BuildTplMessage(models.Telegram, ts.tpl, ctx.Events)
 
 	SendTelegram(TelegramMessage{
 		Text:   message,
 		Tokens: tokens,
+		Stats:  ctx.Stats,
 	})
 }
 
@@ -72,11 +73,6 @@ func SendTelegram(message TelegramMessage) {
 			Text:      message.Text,
 		}
 
-		res, code, err := poster.PostJSON(url, time.Second*5, body, 3)
-		if err != nil {
-			logger.Errorf("telegram_sender: result=fail url=%s code=%d error=%v response=%s", url, code, err, string(res))
-		} else {
-			logger.Infof("telegram_sender: result=succ url=%s code=%d response=%s", url, code, string(res))
-		}
+		doSend(url, body, models.Telegram, message.Stats)
 	}
 }

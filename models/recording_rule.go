@@ -208,6 +208,23 @@ func RecordingRuleGets(ctx *ctx.Context, groupId int64) ([]RecordingRule, error)
 	return lst, err
 }
 
+func RecordingRuleGetsByBGIds(ctx *ctx.Context, bgids []int64) ([]RecordingRule, error) {
+	session := DB(ctx)
+	if len(bgids) > 0 {
+		session = session.Where("group_id in (?)", bgids).Order("name")
+	}
+
+	var lst []RecordingRule
+	err := session.Find(&lst).Error
+	if err == nil {
+		for i := 0; i < len(lst); i++ {
+			lst[i].DB2FE()
+		}
+	}
+
+	return lst, err
+}
+
 func RecordingRuleGet(ctx *ctx.Context, where string, regs ...interface{}) (*RecordingRule, error) {
 	var lst []*RecordingRule
 	err := DB(ctx).Where(where, regs...).Find(&lst).Error

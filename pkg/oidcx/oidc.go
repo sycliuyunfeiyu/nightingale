@@ -21,6 +21,7 @@ type SsoClient struct {
 	Verifier        *oidc.IDTokenVerifier
 	Config          oauth2.Config
 	SsoAddr         string
+	SsoLogoutAddr   string
 	CallbackAddr    string
 	CoverAttributes bool
 	DisplayName     string
@@ -32,7 +33,8 @@ type SsoClient struct {
 	}
 	DefaultRoles []string
 
-	Ctx context.Context
+	Ctx      context.Context
+	Provider *oidc.Provider
 	sync.RWMutex
 }
 
@@ -41,17 +43,19 @@ type Config struct {
 	DisplayName     string
 	RedirectURL     string
 	SsoAddr         string
+	SsoLogoutAddr   string
 	ClientId        string
 	ClientSecret    string
 	CoverAttributes bool
 	SkipTlsVerify   bool
 	Attributes      struct {
-		Nickname string
 		Username string
+		Nickname string
 		Phone    string
 		Email    string
 	}
 	DefaultRoles []string
+	Scopes       []string
 }
 
 func New(cf Config) (*SsoClient, error) {
@@ -77,6 +81,7 @@ func (s *SsoClient) Reload(cf Config) error {
 
 	s.Enable = cf.Enable
 	s.SsoAddr = cf.SsoAddr
+	s.SsoLogoutAddr = cf.SsoLogoutAddr
 	s.CallbackAddr = cf.RedirectURL
 	s.CoverAttributes = cf.CoverAttributes
 	s.Attributes.Username = cf.Attributes.Username
@@ -106,13 +111,19 @@ func (s *SsoClient) Reload(cf Config) error {
 	}
 
 	s.Verifier = provider.Verifier(oidcConfig)
+	s.Provider = provider
 	s.Config = oauth2.Config{
 		ClientID:     cf.ClientId,
 		ClientSecret: cf.ClientSecret,
 		Endpoint:     provider.Endpoint(),
 		RedirectURL:  cf.RedirectURL,
-		Scopes:       []string{oidc.ScopeOpenID, "profile", "email", "phone"},
+		Scopes:       cf.Scopes,
 	}
+
+	if len(s.Config.Scopes) == 0 {
+		s.Config.Scopes = []string{oidc.ScopeOpenID, "profile", "email", "phone"}
+	}
+
 	return nil
 }
 
@@ -124,6 +135,16 @@ func (s *SsoClient) GetDisplayName() string {
 	}
 
 	return s.DisplayName
+}
+
+func (s *SsoClient) GetSsoLogoutAddr() string {
+	s.RLock()
+	defer s.RUnlock()
+	if !s.Enable {
+		return ""
+	}
+
+	return s.SsoLogoutAddr
 }
 
 func wrapStateKey(key string) string {
@@ -158,17 +179,17 @@ func deleteRedirect(redis storage.Redis, ctx context.Context, state string) erro
 func (s *SsoClient) Callback(redis storage.Redis, ctx context.Context, code, state string) (*CallbackOutput, error) {
 	ret, err := s.exchangeUser(code)
 	if err != nil {
-		return nil, fmt.Errorf("ilegal user:%v", err)
+		return nil, fmt.Errorf("sso_exchange_user fail. code:%s, error:%v", code, err)
 	}
 
 	ret.Redirect, err = fetchRedirect(redis, ctx, state)
 	if err != nil {
-		logger.Debugf("get redirect err:%v code:%s state:%s", code, state, err)
+		logger.Errorf("get redirect err:%v code:%s state:%s", code, state, err)
 	}
 
 	err = deleteRedirect(redis, ctx, state)
 	if err != nil {
-		logger.Debugf("delete redirect err:%v code:%s state:%s", code, state, err)
+		logger.Errorf("delete redirect err:%v code:%s state:%s", code, state, err)
 	}
 	return ret, nil
 }
@@ -194,32 +215,75 @@ func (s *SsoClient) exchangeUser(code string) (*CallbackOutput, error) {
 
 	rawIDToken, ok := oauth2Token.Extra("id_token").(string)
 	if !ok {
-		return nil, fmt.Errorf("no id_token field in oauth2 token. ")
+		rerr := fmt.Errorf("sso_exchange_user: no id_token field in oauth2 token %v", oauth2Token)
+		logger.Error(rerr)
+		return nil, rerr
 	}
 
 	idToken, err := s.Verifier.Verify(s.Ctx, rawIDToken)
 	if err != nil {
-		return nil, fmt.Errorf("failed to verify ID Token: %v", err)
+		rerr := fmt.Errorf("sso_exchange_user: failed to verify id_token: %s, error:%v", rawIDToken, err)
+		logger.Error(rerr)
+		return nil, rerr
 	}
+
+	logger.Infof("sso_exchange_user: verify id_token success. token:%s", rawIDToken)
 
 	data := map[string]interface{}{}
 	if err := idToken.Claims(&data); err != nil {
-		return nil, err
+		rerr := fmt.Errorf("sso_exchange_user: failed to parse id_token: %s, error:%+v", rawIDToken, err)
+		logger.Error(rerr)
+		return nil, rerr
 	}
 
-	v := func(k string) string {
-		if in := data[k]; in == nil {
-			return ""
-		} else {
-			return in.(string)
+	for k, v := range data {
+		logger.Debugf("sso_exchange_user: oidc info key:%s value:%v", k, v)
+	}
+
+	output := &CallbackOutput{
+		AccessToken: oauth2Token.AccessToken,
+		Username:    extractClaim(data, s.Attributes.Username),
+		Nickname:    extractClaim(data, s.Attributes.Nickname),
+		Phone:       extractClaim(data, s.Attributes.Phone),
+		Email:       extractClaim(data, s.Attributes.Email),
+	}
+
+	userInfo, err := s.Provider.UserInfo(s.Ctx, oauth2.StaticTokenSource(oauth2Token))
+	if err != nil {
+		logger.Errorf("sso_exchange_user: failed to get userinfo: %v", err)
+		return output, nil
+	}
+
+	if userInfo == nil {
+		logger.Errorf("sso_exchange_user: userinfo is nil")
+		return output, nil
+	}
+
+	logger.Debugf("sso_exchange_user: userinfo subject:%s email:%s profile:%s", userInfo.Subject, userInfo.Email, userInfo.Profile)
+	if output.Email == "" {
+		output.Email = userInfo.Email
+	}
+
+	data = map[string]interface{}{}
+	userInfo.Claims(&data)
+	logger.Debugf("sso_exchange_user: userinfo claims:%+v", data)
+
+	if output.Nickname == "" {
+		output.Nickname = extractClaim(data, s.Attributes.Nickname)
+	}
+
+	if output.Phone == "" {
+		output.Phone = extractClaim(data, s.Attributes.Phone)
+	}
+
+	return output, nil
+}
+
+func extractClaim(data map[string]interface{}, key string) string {
+	if value, ok := data[key]; ok {
+		if strValue, ok := value.(string); ok {
+			return strValue
 		}
 	}
-
-	return &CallbackOutput{
-		AccessToken: oauth2Token.AccessToken,
-		Username:    v(s.Attributes.Username),
-		Nickname:    v(s.Attributes.Nickname),
-		Phone:       v(s.Attributes.Phone),
-		Email:       v(s.Attributes.Email),
-	}, nil
+	return ""
 }

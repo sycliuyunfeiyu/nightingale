@@ -13,15 +13,18 @@ import (
 )
 
 type Target struct {
-	Id       int64             `json:"id" gorm:"primaryKey"`
-	GroupId  int64             `json:"group_id"`
-	GroupObj *BusiGroup        `json:"group_obj" gorm:"-"`
-	Ident    string            `json:"ident"`
-	Note     string            `json:"note"`
-	Tags     string            `json:"-"`
-	TagsJSON []string          `json:"tags" gorm:"-"`
-	TagsMap  map[string]string `json:"tags_maps" gorm:"-"` // internal use, append tags to series
-	UpdateAt int64             `json:"update_at"`
+	Id           int64             `json:"id" gorm:"primaryKey"`
+	GroupId      int64             `json:"group_id"`
+	GroupObj     *BusiGroup        `json:"group_obj" gorm:"-"`
+	Ident        string            `json:"ident"`
+	Note         string            `json:"note"`
+	Tags         string            `json:"-"`
+	TagsJSON     []string          `json:"tags" gorm:"-"`
+	TagsMap      map[string]string `json:"tags_maps" gorm:"-"` // internal use, append tags to series
+	UpdateAt     int64             `json:"update_at"`
+	HostIp       string            `json:"host_ip"` //ipv4，do not needs range select
+	AgentVersion string            `json:"agent_version"`
+	EngineName   string            `json:"engine_name"`
 
 	UnixTime   int64   `json:"unixtime" gorm:"-"`
 	Offset     int64   `json:"offset" gorm:"-"`
@@ -306,13 +309,29 @@ func (t *Target) DelTags(ctx *ctx.Context, tags []string) error {
 func (t *Target) FillTagsMap() {
 	t.TagsJSON = strings.Fields(t.Tags)
 	t.TagsMap = make(map[string]string)
+	m := make(map[string]string)
 	for _, item := range t.TagsJSON {
 		arr := strings.Split(item, "=")
 		if len(arr) != 2 {
 			continue
 		}
-		t.TagsMap[arr[0]] = arr[1]
+		m[arr[0]] = arr[1]
 	}
+
+	t.TagsMap = m
+}
+
+func (t *Target) GetTagsMap() map[string]string {
+	tagsJSON := strings.Fields(t.Tags)
+	m := make(map[string]string)
+	for _, item := range tagsJSON {
+		arr := strings.Split(item, "=")
+		if len(arr) != 2 {
+			continue
+		}
+		m[arr[0]] = arr[1]
+	}
+	return m
 }
 
 func (t *Target) FillMeta(meta *HostMeta) {

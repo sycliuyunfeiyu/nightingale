@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ccfos/nightingale/v6/alert/aconf"
 	"github.com/ccfos/nightingale/v6/models"
 	"github.com/ccfos/nightingale/v6/pkg/ctx"
 	"github.com/ccfos/nightingale/v6/pkg/poster"
@@ -17,12 +16,11 @@ import (
 	"github.com/toolkits/pkg/logger"
 )
 
-func NewPromClient(ctx *ctx.Context, heartbeat aconf.HeartbeatConfig) *PromClientMap {
+func NewPromClient(ctx *ctx.Context) *PromClientMap {
 	pc := &PromClientMap{
 		ReaderClients: make(map[int64]prom.API),
 		WriterClients: make(map[int64]prom.WriterType),
 		ctx:           ctx,
-		heartbeat:     heartbeat,
 	}
 	pc.InitReader()
 	return pc
@@ -47,11 +45,23 @@ func (pc *PromClientMap) loadFromDatabase() {
 			logger.Errorf("failed to get datasources, error: %v", err)
 			return
 		}
+		lokiDatasource, err := poster.GetByUrls[[]*models.Datasource](pc.ctx, "/v1/n9e/datasources?typ="+models.LOKI)
+		datasources = append(datasources, lokiDatasource...)
+		if err != nil {
+			logger.Errorf("failed to get datasources, error: %v", err)
+			return
+		}
 		for i := 0; i < len(datasources); i++ {
 			datasources[i].FE2DB()
 		}
 	} else {
 		datasources, err = models.GetDatasourcesGetsBy(pc.ctx, models.PROMETHEUS, "", "", "")
+		if err != nil {
+			logger.Errorf("failed to get datasources, error: %v", err)
+			return
+		}
+		lokiDatasource, err := models.GetDatasourcesGetsBy(pc.ctx, models.LOKI, "", "", "")
+		datasources = append(datasources, lokiDatasource...)
 		if err != nil {
 			logger.Errorf("failed to get datasources, error: %v", err)
 			return

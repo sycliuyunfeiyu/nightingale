@@ -2,6 +2,7 @@ package router
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -72,8 +73,6 @@ func (rt *Router) pushEventToQueue(c *gin.Context) {
 	event.NotifyChannels = strings.Join(event.NotifyChannelsJSON, " ")
 	event.NotifyGroups = strings.Join(event.NotifyGroupsJSON, " ")
 
-	rt.AlertStats.CounterAlertsTotal.WithLabelValues(event.Cluster).Inc()
-
 	dispatch.LogEvent(event, "http_push_queue")
 	if !queue.EventQueue.PushFront(event) {
 		msg := fmt.Sprintf("event:%+v push_queue err: queue is full", event)
@@ -87,7 +86,8 @@ func (rt *Router) eventPersist(c *gin.Context) {
 	var event *models.AlertCurEvent
 	ginx.BindJSON(c, &event)
 	event.FE2DB()
-	ginx.NewRender(c).Message(models.EventPersist(rt.Ctx, event))
+	err := models.EventPersist(rt.Ctx, event)
+	ginx.NewRender(c).Data(event.Id, err)
 }
 
 type eventForm struct {
@@ -103,7 +103,7 @@ func (rt *Router) makeEvent(c *gin.Context) {
 	ginx.BindJSON(c, &events)
 	//now := time.Now().Unix()
 	for i := 0; i < len(events); i++ {
-		node, err := naming.DatasourceHashRing.GetNode(events[i].DatasourceId, fmt.Sprintf("%d", events[i].RuleId))
+		node, err := naming.DatasourceHashRing.GetNode(strconv.FormatInt(events[i].DatasourceId, 10), fmt.Sprintf("%d", events[i].RuleId))
 		if err != nil {
 			logger.Warningf("event:%+v get node err:%v", events[i], err)
 			ginx.Bomb(200, "event node not exists")

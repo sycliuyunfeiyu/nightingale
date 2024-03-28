@@ -4,12 +4,15 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"io/ioutil"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/ccfos/nightingale/v6/models"
 
 	"github.com/gin-gonic/gin"
 	"github.com/toolkits/pkg/ginx"
+	"github.com/toolkits/pkg/logger"
 )
 
 func (rt *Router) heartbeat(c *gin.Context) {
@@ -44,18 +47,51 @@ func (rt *Router) heartbeat(c *gin.Context) {
 		req.RemoteAddr = c.ClientIP()
 	}
 
+	if req.EngineName == "" {
+		req.EngineName = rt.Alert.Heartbeat.EngineName
+	}
+
 	rt.MetaSet.Set(req.Hostname, req)
 	var items = make(map[string]struct{})
 	items[req.Hostname] = struct{}{}
 	rt.IdentSet.MSet(items)
 
-	gid := ginx.QueryInt64(c, "gid", 0)
+	if target, has := rt.TargetCache.Get(req.Hostname); has && target != nil {
+		gid := ginx.QueryInt64(c, "gid", 0)
+		hostIp := strings.TrimSpace(req.HostIp)
 
-	if gid != 0 {
-		target, has := rt.TargetCache.Get(req.Hostname)
-		if has && target.GroupId != gid {
-			err = models.TargetUpdateBgid(rt.Ctx, []string{req.Hostname}, gid, false)
+		filed := make(map[string]interface{})
+		if gid != 0 && gid != target.GroupId {
+			filed["group_id"] = gid
 		}
+
+		if hostIp != "" && hostIp != target.HostIp {
+			filed["host_ip"] = hostIp
+		}
+
+		if len(req.GlobalLabels) > 0 {
+			lst := []string{}
+			for k, v := range req.GlobalLabels {
+				lst = append(lst, k+"="+v)
+			}
+			sort.Strings(lst)
+			labels := strings.Join(lst, " ")
+			if target.Tags != labels {
+				filed["tags"] = labels
+			}
+		}
+
+		if req.EngineName != "" && req.EngineName != target.EngineName {
+			filed["engine_name"] = req.EngineName
+		}
+
+		if len(filed) > 0 {
+			err := target.UpdateFieldsMap(rt.Ctx, filed)
+			if err != nil {
+				logger.Errorf("update target fields failed, err: %v", err)
+			}
+		}
+		logger.Debugf("heartbeat field:%+v target: %v", filed, *target)
 	}
 
 	ginx.NewRender(c).Message(err)

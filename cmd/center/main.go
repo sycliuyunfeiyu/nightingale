@@ -13,6 +13,7 @@ import (
 	"github.com/ccfos/nightingale/v6/pkg/osx"
 	"github.com/ccfos/nightingale/v6/pkg/version"
 
+	"github.com/toolkits/pkg/net/tcpx"
 	"github.com/toolkits/pkg/runner"
 )
 
@@ -31,6 +32,8 @@ func main() {
 	}
 
 	printEnv()
+
+	tcpx.WaitHosts()
 
 	cleanFunc, err := center.Initialize(*configDir, *cryptoKey)
 	if err != nil {

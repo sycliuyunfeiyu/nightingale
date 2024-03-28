@@ -61,16 +61,27 @@ func (e *Consumer) consume(events []interface{}, sema *semaphore.Semaphore) {
 func (e *Consumer) consumeOne(event *models.AlertCurEvent) {
 	LogEvent(event, "consume")
 
+	eventType := "alert"
+	if event.IsRecovered {
+		eventType = "recovery"
+	}
+
+	e.dispatch.Astats.CounterAlertsTotal.WithLabelValues(event.Cluster, eventType, event.GroupName).Inc()
+
 	if err := event.ParseRule("rule_name"); err != nil {
+		logger.Warningf("ruleid:%d failed to parse rule name: %v", event.RuleId, err)
 		event.RuleName = fmt.Sprintf("failed to parse rule name: %v", err)
 	}
 
 	if err := event.ParseRule("rule_note"); err != nil {
+		logger.Warningf("ruleid:%d failed to parse rule note: %v", event.RuleId, err)
 		event.RuleNote = fmt.Sprintf("failed to parse rule note: %v", err)
 	}
 
 	if err := event.ParseRule("annotations"); err != nil {
-		event.Annotations = fmt.Sprintf("failed to parse rule note: %v", err)
+		logger.Warningf("ruleid:%d failed to parse annotations: %v", event.RuleId, err)
+		event.Annotations = fmt.Sprintf("failed to parse annotations: %v", err)
+		event.AnnotationsJSON["error"] = event.Annotations
 	}
 
 	e.persist(event)
@@ -89,9 +100,11 @@ func (e *Consumer) persist(event *models.AlertCurEvent) {
 
 	if !e.ctx.IsCenter {
 		event.DB2FE()
-		err := poster.PostByUrls(e.ctx, "/v1/n9e/event-persist", event)
+		var err error
+		event.Id, err = poster.PostByUrlsWithResp[int64](e.ctx, "/v1/n9e/event-persist", event)
 		if err != nil {
-			logger.Errorf("event%+v persist err:%v", event, err)
+			logger.Errorf("event:%+v persist err:%v", event, err)
+			e.dispatch.Astats.CounterRuleEvalErrorTotal.WithLabelValues(fmt.Sprintf("%v", event.DatasourceId), "persist_event").Inc()
 		}
 		return
 	}
@@ -99,5 +112,6 @@ func (e *Consumer) persist(event *models.AlertCurEvent) {
 	err := models.EventPersist(e.ctx, event)
 	if err != nil {
 		logger.Errorf("event%+v persist err:%v", event, err)
+		e.dispatch.Astats.CounterRuleEvalErrorTotal.WithLabelValues(fmt.Sprintf("%v", event.DatasourceId), "persist_event").Inc()
 	}
 }

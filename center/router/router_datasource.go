@@ -3,6 +3,7 @@ package router
 import (
 	"crypto/tls"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -25,7 +26,7 @@ type listReq struct {
 }
 
 func (rt *Router) datasourceList(c *gin.Context) {
-	if rt.DatasourceCheckHook(c) {
+	if rt.DatasourceCache.DatasourceCheckHook(c) {
 		Render(c, []int{}, nil)
 		return
 	}
@@ -37,8 +38,10 @@ func (rt *Router) datasourceList(c *gin.Context) {
 	category := req.Category
 	name := req.Name
 
+	user := c.MustGet("user").(*models.User)
+
 	list, err := models.GetDatasourcesGetsBy(rt.Ctx, typ, category, name, "")
-	Render(c, list, err)
+	Render(c, rt.DatasourceCache.DatasourceFilter(list, user), err)
 }
 
 func (rt *Router) datasourceGetsByService(c *gin.Context) {
@@ -47,30 +50,36 @@ func (rt *Router) datasourceGetsByService(c *gin.Context) {
 	ginx.NewRender(c).Data(lst, err)
 }
 
-type datasourceBrief struct {
-	Id         int64  `json:"id"`
-	Name       string `json:"name"`
-	PluginType string `json:"plugin_type"`
-}
-
 func (rt *Router) datasourceBriefs(c *gin.Context) {
-	var dss []datasourceBrief
+	var dss []*models.Datasource
 	list, err := models.GetDatasourcesGetsBy(rt.Ctx, "", "", "", "")
 	ginx.Dangerous(err)
 
-	for i := range list {
-		dss = append(dss, datasourceBrief{
-			Id:         list[i].Id,
-			Name:       list[i].Name,
-			PluginType: list[i].PluginType,
-		})
+	for _, item := range list {
+		item.AuthJson.BasicAuthPassword = ""
+		if item.PluginType != models.PROMETHEUS {
+			item.SettingsJson = nil
+		} else {
+			for k, v := range item.SettingsJson {
+				if strings.HasPrefix(k, "prometheus.") {
+					item.SettingsJson[strings.TrimPrefix(k, "prometheus.")] = v
+					delete(item.SettingsJson, k)
+				}
+			}
+		}
+		dss = append(dss, item)
+	}
+
+	if !rt.Center.AnonymousAccess.PromQuerier {
+		user := c.MustGet("user").(*models.User)
+		dss = rt.DatasourceCache.DatasourceFilter(dss, user)
 	}
 
 	ginx.NewRender(c).Data(dss, err)
 }
 
 func (rt *Router) datasourceUpsert(c *gin.Context) {
-	if rt.DatasourceCheckHook(c) {
+	if rt.DatasourceCache.DatasourceCheckHook(c) {
 		Render(c, []int{}, nil)
 		return
 	}
@@ -104,7 +113,7 @@ func (rt *Router) datasourceUpsert(c *gin.Context) {
 		}
 		err = req.Add(rt.Ctx)
 	} else {
-		err = req.Update(rt.Ctx, "name", "description", "cluster_name", "settings", "http", "auth", "updated_by", "updated_at")
+		err = req.Update(rt.Ctx, "name", "description", "cluster_name", "settings", "http", "auth", "updated_by", "updated_at", "is_default")
 	}
 
 	Render(c, nil, err)
@@ -149,6 +158,25 @@ func DatasourceCheck(ds models.Datasource) error {
 			logger.Errorf("Error creating request: %v", err)
 			return fmt.Errorf("request url:%s failed", fullURL)
 		}
+	} else if ds.PluginType == models.TDENGINE {
+		fullURL = fmt.Sprintf("%s/rest/sql", ds.HTTPJson.Url)
+		req, err = http.NewRequest("POST", fullURL, strings.NewReader("show databases"))
+		if err != nil {
+			logger.Errorf("Error creating request: %v", err)
+			return fmt.Errorf("request url:%s failed", fullURL)
+		}
+	}
+
+	if ds.PluginType == models.LOKI {
+		subPath := "/api/v1/labels"
+
+		fullURL = fmt.Sprintf("%s%s", ds.HTTPJson.Url, subPath)
+
+		req, err = http.NewRequest("GET", fullURL, nil)
+		if err != nil {
+			logger.Errorf("Error creating request: %v", err)
+			return fmt.Errorf("request url:%s failed", fullURL)
+		}
 	}
 
 	if ds.AuthJson.BasicAuthUser != "" {
@@ -168,14 +196,15 @@ func DatasourceCheck(ds models.Datasource) error {
 
 	if resp.StatusCode != 200 {
 		logger.Errorf("Error making request: %v\n", resp.StatusCode)
-		return fmt.Errorf("request url:%s failed code:%d", fullURL, resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("request url:%s failed code:%d body:%s", fullURL, resp.StatusCode, string(body))
 	}
 
 	return nil
 }
 
 func (rt *Router) datasourceGet(c *gin.Context) {
-	if rt.DatasourceCheckHook(c) {
+	if rt.DatasourceCache.DatasourceCheckHook(c) {
 		Render(c, []int{}, nil)
 		return
 	}
@@ -187,7 +216,7 @@ func (rt *Router) datasourceGet(c *gin.Context) {
 }
 
 func (rt *Router) datasourceUpdataStatus(c *gin.Context) {
-	if rt.DatasourceCheckHook(c) {
+	if rt.DatasourceCache.DatasourceCheckHook(c) {
 		Render(c, []int{}, nil)
 		return
 	}
@@ -201,7 +230,7 @@ func (rt *Router) datasourceUpdataStatus(c *gin.Context) {
 }
 
 func (rt *Router) datasourceDel(c *gin.Context) {
-	if rt.DatasourceCheckHook(c) {
+	if rt.DatasourceCache.DatasourceCheckHook(c) {
 		Render(c, []int{}, nil)
 		return
 	}
@@ -217,9 +246,4 @@ func (rt *Router) getDatasourceIds(c *gin.Context) {
 	datasourceIds, err := models.GetDatasourceIdsByEngineName(rt.Ctx, name)
 
 	ginx.NewRender(c).Data(datasourceIds, err)
-}
-
-func Username(c *gin.Context) string {
-
-	return c.MustGet("username").(string)
 }

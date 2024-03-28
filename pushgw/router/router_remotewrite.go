@@ -21,32 +21,52 @@ func extractMetricFromTimeSeries(s *prompb.TimeSeries) string {
 	return ""
 }
 
-func extractIdentFromTimeSeries(s *prompb.TimeSeries, ignoreIdent bool) string {
-	for i := 0; i < len(s.Labels); i++ {
-		if s.Labels[i].Name == "ident" {
-			return s.Labels[i].Value
-		}
+func extractIdentFromTimeSeries(s *prompb.TimeSeries, ignoreIdent bool, identMetrics []string) (string, string) {
+	if s == nil {
+		return "", ""
 	}
 
+	labelMap := make(map[string]int)
+	for i, label := range s.Labels {
+		labelMap[label.Name] = i
+	}
+
+	var ident string
+	var heartbeatIdent string
 	// agent_hostname for grafana-agent and categraf
-	for i := 0; i < len(s.Labels); i++ {
-		if s.Labels[i].Name == "agent_hostname" {
-			s.Labels[i].Name = "ident"
-			return s.Labels[i].Value
+	if idx, ok := labelMap["agent_hostname"]; ok {
+		s.Labels[idx].Name = "ident"
+		ident = s.Labels[idx].Value
+	}
+
+	if !ignoreIdent && ident == "" {
+		// telegraf, output plugin: http, format: prometheusremotewrite
+		if idx, ok := labelMap["host"]; ok {
+			s.Labels[idx].Name = "ident"
+			ident = s.Labels[idx].Value
 		}
 	}
 
-	if !ignoreIdent {
-		// telegraf, output plugin: http, format: prometheusremotewrite
-		for i := 0; i < len(s.Labels); i++ {
-			if s.Labels[i].Name == "host" {
-				s.Labels[i].Name = "ident"
-				return s.Labels[i].Value
+	if idx, ok := labelMap["ident"]; ok {
+		ident = s.Labels[idx].Value
+	}
+
+	heartbeatIdent = ident
+	if len(identMetrics) > 0 {
+		metricFound := false
+		for _, identMetric := range identMetrics {
+			if idx, has := labelMap["__name__"]; has && s.Labels[idx].Value == identMetric {
+				metricFound = true
+				break
 			}
 		}
+
+		if !metricFound {
+			heartbeatIdent = ""
+		}
 	}
 
-	return ""
+	return ident, heartbeatIdent
 }
 
 func duplicateLabelKey(series *prompb.TimeSeries) bool {
@@ -81,33 +101,32 @@ func (rt *Router) remoteWrite(c *gin.Context) {
 		return
 	}
 
-	var (
-		ident string
-		ids   = make(map[string]struct{})
-	)
+	var ids = make(map[string]struct{})
 
 	for i := 0; i < count; i++ {
-		if duplicateLabelKey(req.Timeseries[i]) {
+		if duplicateLabelKey(&req.Timeseries[i]) {
 			continue
 		}
 
-		ident = extractIdentFromTimeSeries(req.Timeseries[i], ginx.QueryBool(c, "ignore_ident", false))
+		ident, heartbeatIdent := extractIdentFromTimeSeries(&req.Timeseries[i], ginx.QueryBool(c, "ignore_ident", false), rt.Pushgw.IdentMetrics)
 		if len(ident) > 0 {
-			// has ident tag or agent_hostname tag
-			// register host in table target
-			ids[ident] = struct{}{}
-
 			// enrich host labels
 			target, has := rt.TargetCache.Get(ident)
 			if has {
-				rt.AppendLabels(req.Timeseries[i], target, rt.BusiGroupCache)
+				rt.AppendLabels(&req.Timeseries[i], target, rt.BusiGroupCache)
 			}
 		}
 
+		if len(heartbeatIdent) > 0 {
+			// has ident tag or agent_hostname tag
+			// register host in table target
+			ids[ident] = struct{}{}
+		}
+
 		if len(ident) > 0 {
-			rt.ForwardByIdent(c.ClientIP(), ident, req.Timeseries[i])
+			rt.ForwardByIdent(c.ClientIP(), ident, &req.Timeseries[i])
 		} else {
-			rt.ForwardByMetric(c.ClientIP(), extractMetricFromTimeSeries(req.Timeseries[i]), req.Timeseries[i])
+			rt.ForwardByMetric(c.ClientIP(), extractMetricFromTimeSeries(&req.Timeseries[i]), &req.Timeseries[i])
 		}
 	}
 
