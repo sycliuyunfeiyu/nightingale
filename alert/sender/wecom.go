@@ -56,7 +56,7 @@ func (ws *WecomSender) extract(users []*models.User) []string {
 }
 
 func (ws *WecomSender) doSend(url string, body wecom) {
-	res, code, err := poster.PostJSON(url, time.Second*5, body, 3)
+	res, code, err := poster.PostJSONProxy(url, time.Second*5, body, 3)
 	if err != nil {
 		logger.Errorf("wecom_sender: result=fail url=%s code=%d error=%v response=%s", url, code, err, string(res))
 	} else {
