@@ -47,7 +47,7 @@ func SendCallbacks(ctx *ctx.Context, urls []string, event *models.AlertCurEvent,
 	}
 }
 func SendCallbacks_cloud(ctx *ctx.Context, urls []string, event *models.AlertCurEvent, targetCache *memsto.TargetCacheType, userCache *memsto.UserCacheType,
-	ibexConf aconf.Ibex, stats *astats.Stats) {
+	taskTplCache *memsto.TaskTplCache, stats *astats.Stats) {
 	var CloudData struct {
 		Content        string `json:"content"`
 		Level          int    `json:"level"`
