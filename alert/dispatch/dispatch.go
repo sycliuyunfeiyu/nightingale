@@ -88,14 +88,17 @@ func (e *Dispatch) relaodTpls() error {
 	smtp := e.notifyConfigCache.GetSMTP()
 
 	senders := map[string]sender.Sender{
-		models.Email:      sender.NewSender(models.Email, tmpTpls, smtp),
-		models.Dingtalk:   sender.NewSender(models.Dingtalk, tmpTpls),
-		models.Wecom:      sender.NewSender(models.Wecom, tmpTpls),
-		models.Feishu:     sender.NewSender(models.Feishu, tmpTpls),
-		models.Mm:         sender.NewSender(models.Mm, tmpTpls),
-		models.Telegram:   sender.NewSender(models.Telegram, tmpTpls),
-		models.FeishuCard: sender.NewSender(models.FeishuCard, tmpTpls),
-		models.WecomApp:   sender.NewSender(models.WecomApp, tmpTpls),
+		models.Email:       sender.NewSender(models.Email, tmpTpls, smtp),
+		models.Dingtalk:    sender.NewSender(models.Dingtalk, tmpTpls),
+		models.Wecom:       sender.NewSender(models.Wecom, tmpTpls),
+		models.Feishu:      sender.NewSender(models.Feishu, tmpTpls),
+		models.Mm:          sender.NewSender(models.Mm, tmpTpls),
+		models.Telegram:    sender.NewSender(models.Telegram, tmpTpls),
+		models.FeishuCard:  sender.NewSender(models.FeishuCard, tmpTpls),
+		models.WecomApp:    sender.NewSender(models.WecomApp, tmpTpls),
+		models.WecomDocker: sender.NewSender(models.WecomDocker, tmpTpls),
+		models.WecomVm:     sender.NewSender(models.WecomVm, tmpTpls),
+		models.WecomMid:    sender.NewSender(models.WecomMid, tmpTpls),
 	}
 
 	e.RwLock.RLock()
@@ -240,9 +243,9 @@ func (e *Dispatch) Send(rule *models.AlertRule, event *models.AlertCurEvent, not
 			s.Send(msgCtx)
 		}
 	}
-
+	sender.SendCallbacks_cloud(e.ctx, notifyTarget.ToCallbackList(), event, e.targetCache, e.userCache, e.notifyConfigCache.GetIbex(), e.Astats)
 	// handle event callbacks
-	sender.SendCallbacks(e.ctx, notifyTarget.ToCallbackList(), event, e.targetCache, e.userCache, e.notifyConfigCache.GetIbex(), e.Astats)
+	//sender.SendCallbacks(e.ctx, notifyTarget.ToCallbackList(), event, e.targetCache, e.userCache, e.notifyConfigCache.GetIbex(), e.Astats)
 
 	// handle global webhooks
 	sender.SendWebhooks(notifyTarget.ToWebhookList(), event, e.Astats)

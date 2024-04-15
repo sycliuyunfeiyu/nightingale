@@ -14,7 +14,6 @@ import (
 	"github.com/ccfos/nightingale/v6/pkg/ctx"
 
 	"github.com/toolkits/pkg/logger"
-	urlnet "net/url"
 )
 
 type DataResponse[T any] struct {
@@ -244,11 +243,11 @@ func PostJSONProxy(url string, timeout time.Duration, v interface{}, retries ...
 	}
 	bs = TransHtmlJson(bs)
 	bf := bytes.NewBuffer(bs)
-	urlProxy, err := urlnet.Parse("http://10.210.4.139:21211")
+	//urlProxy, err := urlnet.Parse("http://10.210.111.165:21211")
 	client := http.Client{
-		Timeout: timeout,
+		Timeout:   timeout,
 		Transport: &http.Transport{
-			Proxy: http.ProxyURL(urlProxy),
+			//Proxy: http.ProxyURL(urlProxy),
 		},
 	}
 	req, err := http.NewRequest("POST", url, bf)

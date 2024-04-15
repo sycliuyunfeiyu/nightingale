@@ -1,8 +1,12 @@
 package sender
 
 import (
+	"github.com/ccfos/nightingale/v6/alert/astats"
+	"github.com/ccfos/nightingale/v6/pkg/poster"
+	"github.com/toolkits/pkg/logger"
 	"html/template"
 	"strings"
+	"time"
 
 	"github.com/ccfos/nightingale/v6/models"
 )
@@ -33,7 +37,7 @@ func (ws *WecomSender) Send(ctx MessageContext) {
 				Content: message,
 			},
 		}
-		doSend(url, body, models.Wecom, ctx.Stats)
+		wxDoSend(url, body, models.Wecom, ctx.Stats)
 	}
 }
 
@@ -49,4 +53,16 @@ func (ws *WecomSender) extract(users []*models.User) []string {
 		}
 	}
 	return urls
+}
+func wxDoSend(url string, body interface{}, channel string, stats *astats.Stats) {
+	stats.AlertNotifyTotal.WithLabelValues(channel).Inc()
+	//res, code, err := poster.PostJSON(url, time.Second*5, body, 3)
+
+	res, code, err := poster.PostJSONProxy(url, time.Second*5, body, 3)
+	if err != nil {
+		logger.Errorf("%s_sender: result=fail url=%s code=%d error=%v req:%v response=%s", channel, url, code, err, body, string(res))
+		stats.AlertNotifyErrorTotal.WithLabelValues(channel).Inc()
+	} else {
+		logger.Infof("%s_sender: result=succ url=%s code=%d req:%v response=%s", channel, url, code, body, string(res))
+	}
 }

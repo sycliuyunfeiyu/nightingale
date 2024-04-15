@@ -60,7 +60,7 @@ func (wa *WecomAppSender) Send(ctx MessageContext) {
 		return
 	}
 
-	message := BuildTplMessage(wa.tpl, ctx.Events)
+	message := BuildTplMessage(models.WecomApp, wa.tpl, ctx.Events)
 	urlPostList := wa.extract(ctx.Users, message)
 
 	for _, urlPostMap := range urlPostList {
@@ -116,7 +116,7 @@ func (was *WecomAppSender) doSend(url string, body interface{}, wecomAccessToken
 		Errmsg  string `json:"errmsg"`
 	}
 	var errCode errCodeJosn
-	res, code, err := poster.PostJSON(url, time.Second*5, body, 3)
+	res, code, err := poster.PostJSONProxy(url, time.Second*5, body, 3)
 	errJson := json.Unmarshal(res, &errCode)
 	fmt.Println("=======errCode.errcode=======\n" + string(res))
 

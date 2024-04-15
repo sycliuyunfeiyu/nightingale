@@ -28,6 +28,9 @@ const (
 	Email        = "email"
 	EmailSubject = "mailsubject"
 	WecomApp     = "wecomApp"
+	WecomDocker  = "wecomDocker"
+	WecomVm      = "wecomVm"
+	WecomMid     = "wecomMid"
 
 	DingtalkKey = "dingtalk_robot_token"
 	WecomKey    = "wecom_robot_token"
@@ -38,7 +41,7 @@ const (
 )
 
 var (
-	DefaultChannels = []string{Dingtalk, Wecom, Feishu, Mm, Telegram, Email, FeishuCard, WecomApp}
+	DefaultChannels = []string{Dingtalk, Wecom, Feishu, Mm, Telegram, Email, FeishuCard, WecomApp, WecomDocker, WecomVm, WecomMid}
 )
 
 type User struct {
@@ -621,7 +624,7 @@ func (u *User) ExtractToken(key string) (string, bool) {
 	case Dingtalk:
 		ret := gjson.GetBytes(bs, DingtalkKey)
 		return ret.String(), ret.Exists()
-	case Wecom:
+	case Wecom, WecomDocker, WecomVm, WecomMid:
 		ret := gjson.GetBytes(bs, WecomKey)
 		return ret.String(), ret.Exists()
 	case Feishu, FeishuCard:
