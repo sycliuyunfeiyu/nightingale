@@ -8,6 +8,8 @@ import (
 
 	imodels "github.com/flashcatcloud/ibex/src/models"
 	"github.com/toolkits/pkg/logger"
+	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
@@ -35,9 +37,21 @@ func MigrateIbexTables(db *gorm.DB) {
 }
 
 func MigrateTables(db *gorm.DB) error {
+	var tableOptions string
+	switch db.Dialector.(type) {
+	case *mysql.Dialector:
+		tableOptions = "ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+	case *postgres.Dialector:
+		tableOptions = "ENCODING='UTF8'"
+	}
+	if tableOptions != "" {
+		db = db.Set("gorm:table_options", tableOptions)
+	}
+
 	dts := []interface{}{&RecordingRule{}, &AlertRule{}, &AlertSubscribe{}, &AlertMute{},
 		&TaskRecord{}, &ChartShare{}, &Target{}, &Configs{}, &Datasource{}, &NotifyTpl{},
-		&Board{}, &BoardBusigroup{}, &Users{}, &SsoConfig{}}
+		&Board{}, &BoardBusigroup{}, &Users{}, &SsoConfig{}, &models.BuiltinMetric{},
+		&models.MetricFilter{}, &models.BuiltinComponent{}, &models.BuiltinPayload{}}
 
 	if !columnHasIndex(db, &AlertHisEvent{}, "last_eval_time") {
 		dts = append(dts, &AlertHisEvent{})
@@ -216,7 +230,8 @@ type BoardBusigroup struct {
 }
 
 type Users struct {
-	Belong string `gorm:"column:belong;varchar(16);default:'';comment:belong"`
+	Belong         string `gorm:"column:belong;varchar(16);default:'';comment:belong"`
+	LastActiveTime int64  `gorm:"column:last_active_time;type:int;default:0;comment:last_active_time"`
 }
 
 type SsoConfig struct {

@@ -16,6 +16,7 @@ CREATE TABLE `users` (
     `contacts` varchar(1024) comment 'json e.g. {wecom:xx, dingtalk_robot_token:yy}',
     `maintainer` tinyint(1) not null default 0,
     `belong` varchar(16) not null default '' comment 'belong',
+    `last_active_time` bigint not null default 0,
     `create_at` bigint not null default 0,
     `create_by` varchar(64) not null default '',
     `update_at` bigint not null default 0,
@@ -284,8 +285,8 @@ CREATE TABLE `alert_rule` (
     `notify_repeat_step` int not null default 0 comment 'unit: min',
     `notify_max_number` int not null default 0 comment '',
     `recover_duration` int not null default 0 comment 'unit: s',
-    `callbacks` varchar(1024) not null default '' comment 'split by space: http://a.com/api/x http://a.com/api/y',
-    `runbook_url` varchar(255),
+    `callbacks` varchar(4096) not null default '' comment 'split by space: http://a.com/api/x http://a.com/api/y',
+    `runbook_url` varchar(4096),
     `append_tags` varchar(255) not null default '' comment 'split by space: service=n9e mod=api',
     `annotations` text not null comment 'annotations',
     `extra_config` text not null comment 'extra_config',
@@ -502,6 +503,44 @@ CREATE TABLE `alert_his_event` (
     KEY (`trigger_time`, `group_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET = utf8mb4;
 
+CREATE TABLE `board_busigroup` (
+  `busi_group_id` bigint(20) NOT NULL DEFAULT '0' COMMENT 'busi group id',
+  `board_id` bigint(20) NOT NULL DEFAULT '0' COMMENT 'board id',
+  PRIMARY KEY (`busi_group_id`, `board_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE `builtin_components` (
+  `id` bigint(20) NOT NULL AUTO_INCREMENT COMMENT '''unique identifier''',
+  `ident` varchar(191) NOT NULL COMMENT '''identifier of component''',
+  `logo` varchar(191) NOT NULL COMMENT '''logo of component''',
+  `readme` text NOT NULL COMMENT '''readme of component''',
+  `created_at` bigint(20) NOT NULL DEFAULT 0 COMMENT '''create time''',
+  `created_by` varchar(191) NOT NULL DEFAULT '' COMMENT '''creator''',
+  `updated_at` bigint(20) NOT NULL DEFAULT 0 COMMENT '''update time''',
+  `updated_by` varchar(191) NOT NULL DEFAULT '' COMMENT '''updater''',
+  PRIMARY KEY (`id`),
+  KEY `idx_ident` (`ident`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE `builtin_payloads` (
+  `id` bigint(20) NOT NULL AUTO_INCREMENT COMMENT '''unique identifier''',
+  `type` varchar(191) NOT NULL COMMENT '''type of payload''',
+  `component` varchar(191) NOT NULL COMMENT '''component of payload''',
+  `cate` varchar(191) NOT NULL COMMENT '''category of payload''',
+  `name` varchar(191) NOT NULL COMMENT '''name of payload''',
+  `tags` varchar(191) NOT NULL DEFAULT '' COMMENT '''tags of payload''',
+  `content` longtext NOT NULL COMMENT '''content of payload''',
+  `created_at` bigint(20) NOT NULL DEFAULT 0 COMMENT '''create time''',
+  `created_by` varchar(191) NOT NULL DEFAULT '' COMMENT '''creator''',
+  `updated_at` bigint(20) NOT NULL DEFAULT 0 COMMENT '''update time''',
+  `updated_by` varchar(191) NOT NULL DEFAULT '' COMMENT '''updater''',
+  PRIMARY KEY (`id`),
+  KEY `idx_component` (`component`),
+  KEY `idx_name` (`name`),
+  KEY `idx_cate` (`cate`),
+  KEY `idx_type` (`type`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE `task_tpl`
 (
     `id`        int unsigned NOT NULL AUTO_INCREMENT,
@@ -654,6 +693,18 @@ CREATE TABLE `builtin_metrics` (
     INDEX `idx_lang` (`lang`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+CREATE TABLE `metric_filter` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT 'unique identifier',
+  `name` varchar(191) NOT NULL COMMENT 'name of metric filter',
+  `configs` varchar(4096) NOT NULL COMMENT 'configuration of metric filter',
+  `groups_perm` text,
+  `create_at` bigint NOT NULL DEFAULT '0' COMMENT 'create time',
+  `create_by` varchar(191) NOT NULL DEFAULT '' COMMENT 'creator',
+  `update_at` bigint NOT NULL DEFAULT '0' COMMENT 'update time',
+  `update_by` varchar(191) NOT NULL DEFAULT '' COMMENT 'updater',
+  PRIMARY KEY (`id`),
+  KEY `idx_name` (`name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE `task_meta`
 (

@@ -27,7 +27,7 @@ KeyFile = ""
 # whether print access log
 PrintAccessLog = false
 # whether enable pprof
-PProf = false
+PProf = true
 # expose prometheus /metrics?
 ExposeMetrics = true
 # http graceful shutdown timeout, unit: s
@@ -55,8 +55,6 @@ Enable = true
 user001 = "ccc26da7b9aba533cbb263a36c07dcc5"
 
 [HTTP.JWTAuth]
-# signing key
-SigningKey = "5b94a0fd640fe2765af826acfe42d151"
 # unit: min
 AccessExpired = 1500
 # unit: min
@@ -88,8 +86,6 @@ MaxLifetime = 7200
 MaxOpenConns = 150
 # max idle connections
 MaxIdleConns = 50
-# table prefix
-TablePrefix = ""
 # enable auto migrate or not
 # EnableAutoMigrate = false
 
@@ -167,7 +163,7 @@ MaxIdleConnsPerHost = 100
 # TLSCert = "/etc/n9e/cert.pem"
 # TLSKey = "/etc/n9e/key.pem"
 # InsecureSkipVerify = false
-# [[Writers.WriteRelabels]]
+# [[Pushgw.Writers.WriteRelabels]]
 # Action = "replace"
 # SourceLabels = ["__address__"]
 # Regex = "([^:]+)(?::\\d+)?"

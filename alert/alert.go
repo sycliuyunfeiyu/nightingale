@@ -44,18 +44,16 @@ func Initialize(configDir string, cryptoKey string) (func(), error) {
 	ctx := ctx.NewContext(context.Background(), nil, false, config.CenterApi)
 
 	var redis storage.Redis
-	if config.Redis.Address != "" {
-		redis, err = storage.NewRedis(config.Redis)
-		if err != nil {
-			return nil, err
-		}
+	redis, err = storage.NewRedis(config.Redis)
+	if err != nil {
+		return nil, err
 	}
 
 	syncStats := memsto.NewSyncStats()
 	alertStats := astats.NewSyncStats()
 
 	configCache := memsto.NewConfigCache(ctx, syncStats, nil, "")
-	targetCache := memsto.NewTargetCache(ctx, syncStats, nil)
+	targetCache := memsto.NewTargetCache(ctx, syncStats, redis)
 	busiGroupCache := memsto.NewBusiGroupCache(ctx, syncStats)
 	alertMuteCache := memsto.NewAlertMuteCache(ctx, syncStats)
 	alertRuleCache := memsto.NewAlertRuleCache(ctx, syncStats)

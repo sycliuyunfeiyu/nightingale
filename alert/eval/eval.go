@@ -128,10 +128,37 @@ func (arw *AlertRuleWorker) Eval() {
 		return
 	}
 
-	for _, point := range recoverPoints {
-		str := fmt.Sprintf("%v", point.Value)
-		arw.processor.RecoverSingle(process.Hash(cachedRule.Id, arw.processor.DatasourceId(), point), point.Timestamp, &str)
+	if arw.inhibit {
+		pointsMap := make(map[string]common.AnomalyPoint)
+		for _, point := range recoverPoints {
+			// 对于恢复的事件，合并处理
+			tagHash := process.TagHash(point)
+
+			p, exists := pointsMap[tagHash]
+			if !exists {
+				pointsMap[tagHash] = point
+				continue
+			}
+
+			if p.Severity > point.Severity {
+				hash := process.Hash(cachedRule.Id, arw.processor.DatasourceId(), p)
+				arw.processor.DeleteProcessEvent(hash)
+
+				pointsMap[tagHash] = point
+			}
+		}
+
+		for _, point := range pointsMap {
+			str := fmt.Sprintf("%v", point.Value)
+			arw.processor.RecoverSingle(process.Hash(cachedRule.Id, arw.processor.DatasourceId(), point), point.Timestamp, &str)
+		}
+	} else {
+		for _, point := range recoverPoints {
+			str := fmt.Sprintf("%v", point.Value)
+			arw.processor.RecoverSingle(process.Hash(cachedRule.Id, arw.processor.DatasourceId(), point), point.Timestamp, &str)
+		}
 	}
+
 	arw.processor.Handle(anomalyPoints, "inner", arw.inhibit)
 }
 
@@ -192,7 +219,6 @@ func (arw *AlertRuleWorker) GetPromAnomalyPoint(ruleConfig string) []common.Anom
 			logger.Errorf("rule_eval:%s promql:%s, warnings:%v", arw.Key(), promql, warnings)
 			arw.processor.Stats.CounterQueryDataErrorTotal.WithLabelValues(fmt.Sprintf("%d", arw.datasourceId)).Inc()
 			arw.processor.Stats.CounterRuleEvalErrorTotal.WithLabelValues(fmt.Sprintf("%v", arw.processor.DatasourceId()), QUERY_DATA).Inc()
-			continue
 		}
 
 		logger.Debugf("rule_eval:%s query:%+v, value:%v", arw.Key(), query, value)
@@ -319,7 +345,7 @@ func (arw *AlertRuleWorker) GetHostAnomalyPoint(ruleConfig string) []common.Anom
 					missTargets = append(missTargets, ident)
 				}
 			}
-
+			logger.Debugf("rule_eval:%s missTargets:%v", arw.Key(), missTargets)
 			targets := arw.processor.TargetCache.Gets(missTargets)
 			for _, target := range targets {
 				m := make(map[string]string)
@@ -357,7 +383,6 @@ func (arw *AlertRuleWorker) GetHostAnomalyPoint(ruleConfig string) []common.Anom
 					// means this target is not collect by categraf, do not check offset
 					continue
 				}
-
 				if target, exists := targetMap[ident]; exists {
 					if now-target.UpdateAt > 120 {
 						// means this target is not a active host, do not check offset
@@ -371,6 +396,7 @@ func (arw *AlertRuleWorker) GetHostAnomalyPoint(ruleConfig string) []common.Anom
 				}
 			}
 
+			logger.Debugf("rule_eval:%s offsetIdents:%v", arw.Key(), offsetIdents)
 			for host, offset := range offsetIdents {
 				m := make(map[string]string)
 				target, exists := arw.processor.TargetCache.Get(host)
@@ -405,7 +431,7 @@ func (arw *AlertRuleWorker) GetHostAnomalyPoint(ruleConfig string) []common.Anom
 					missTargets = append(missTargets, ident)
 				}
 			}
-
+			logger.Debugf("rule_eval:%s missTargets:%v", arw.Key(), missTargets)
 			pct := float64(len(missTargets)) / float64(len(idents)) * 100
 			if pct >= float64(trigger.Percent) {
 				lst = append(lst, common.NewAnomalyPoint(trigger.Type, nil, now, pct, trigger.Severity))
