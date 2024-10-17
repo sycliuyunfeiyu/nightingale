@@ -9,7 +9,9 @@ import (
 
 	"github.com/ccfos/nightingale/v6/pkg/ctx"
 	"github.com/ccfos/nightingale/v6/pkg/poster"
+	"github.com/ccfos/nightingale/v6/pushgw/pconf"
 
+	"github.com/jinzhu/copier"
 	"github.com/pkg/errors"
 	"github.com/toolkits/pkg/logger"
 	"github.com/toolkits/pkg/str"
@@ -25,60 +27,97 @@ const (
 	TDENGINE   = "tdengine"
 )
 
+const (
+	AlertRuleEnabled  = 0
+	AlertRuleDisabled = 1
+
+	AlertRuleEnableInGlobalBG = 0
+	AlertRuleEnableInOneBG    = 1
+
+	AlertRuleNotNotifyRecovered = 0
+	AlertRuleNotifyRecovered    = 1
+
+	AlertRuleNotifyRepeatStep60Min = 60
+
+	AlertRuleRecoverDuration0Sec = 0
+)
+
 type AlertRule struct {
-	Id                    int64             `json:"id" gorm:"primaryKey"`
-	GroupId               int64             `json:"group_id"`                      // busi group id
-	Cate                  string            `json:"cate"`                          // alert rule cate (prometheus|elasticsearch)
-	DatasourceIds         string            `json:"-" gorm:"datasource_ids"`       // datasource ids
-	DatasourceIdsJson     []int64           `json:"datasource_ids" gorm:"-"`       // for fe
-	Cluster               string            `json:"cluster"`                       // take effect by clusters, seperated by space
-	Name                  string            `json:"name"`                          // rule name
-	Note                  string            `json:"note"`                          // will sent in notify
-	Prod                  string            `json:"prod"`                          // product empty means n9e
-	Algorithm             string            `json:"algorithm"`                     // algorithm (''|holtwinters), empty means threshold
-	AlgoParams            string            `json:"-" gorm:"algo_params"`          // params algorithm need
-	AlgoParamsJson        interface{}       `json:"algo_params" gorm:"-"`          // for fe
-	Delay                 int               `json:"delay"`                         // Time (in seconds) to delay evaluation
-	Severity              int               `json:"severity"`                      // 1: Emergency 2: Warning 3: Notice
-	Severities            []int             `json:"severities" gorm:"-"`           // 1: Emergency 2: Warning 3: Notice
-	Disabled              int               `json:"disabled"`                      // 0: enabled, 1: disabled
-	PromForDuration       int               `json:"prom_for_duration"`             // prometheus for, unit:s
-	PromQl                string            `json:"prom_ql"`                       // just one ql
-	RuleConfig            string            `json:"-" gorm:"rule_config"`          // rule config
-	RuleConfigJson        interface{}       `json:"rule_config" gorm:"-"`          // rule config for fe
-	PromEvalInterval      int               `json:"prom_eval_interval"`            // unit:s
-	EnableStime           string            `json:"-"`                             // split by space: "00:00 10:00 12:00"
-	EnableStimeJSON       string            `json:"enable_stime" gorm:"-"`         // for fe
-	EnableStimesJSON      []string          `json:"enable_stimes" gorm:"-"`        // for fe
-	EnableEtime           string            `json:"-"`                             // split by space: "00:00 10:00 12:00"
-	EnableEtimeJSON       string            `json:"enable_etime" gorm:"-"`         // for fe
-	EnableEtimesJSON      []string          `json:"enable_etimes" gorm:"-"`        // for fe
-	EnableDaysOfWeek      string            `json:"-"`                             // eg: "0 1 2 3 4 5 6 ; 0 1 2"
-	EnableDaysOfWeekJSON  []string          `json:"enable_days_of_week" gorm:"-"`  // for fe
-	EnableDaysOfWeeksJSON [][]string        `json:"enable_days_of_weeks" gorm:"-"` // for fe
-	EnableInBG            int               `json:"enable_in_bg"`                  // 0: global 1: enable one busi-group
-	NotifyRecovered       int               `json:"notify_recovered"`              // whether notify when recovery
-	NotifyChannels        string            `json:"-"`                             // split by space: sms voice email dingtalk wecom
-	NotifyChannelsJSON    []string          `json:"notify_channels" gorm:"-"`      // for fe
-	NotifyGroups          string            `json:"-"`                             // split by space: 233 43
-	NotifyGroupsObj       []UserGroup       `json:"notify_groups_obj" gorm:"-"`    // for fe
-	NotifyGroupsJSON      []string          `json:"notify_groups" gorm:"-"`        // for fe
-	NotifyRepeatStep      int               `json:"notify_repeat_step"`            // notify repeat interval, unit: min
-	NotifyMaxNumber       int               `json:"notify_max_number"`             // notify: max number
-	RecoverDuration       int64             `json:"recover_duration"`              // unit: s
-	Callbacks             string            `json:"-"`                             // split by space: http://a.com/api/x http://a.com/api/y'
-	CallbacksJSON         []string          `json:"callbacks" gorm:"-"`            // for fe
-	RunbookUrl            string            `json:"runbook_url"`                   // sop url
-	AppendTags            string            `json:"-"`                             // split by space: service=n9e mod=api
-	AppendTagsJSON        []string          `json:"append_tags" gorm:"-"`          // for fe
-	Annotations           string            `json:"-"`                             //
-	AnnotationsJSON       map[string]string `json:"annotations" gorm:"-"`          // for fe
-	ExtraConfig           string            `json:"-" gorm:"extra_config"`         // extra config
-	ExtraConfigJSON       interface{}       `json:"extra_config" gorm:"-"`         // for fe
-	CreateAt              int64             `json:"create_at"`
-	CreateBy              string            `json:"create_by"`
-	UpdateAt              int64             `json:"update_at"`
-	UpdateBy              string            `json:"update_by"`
+	Id                    int64                  `json:"id" gorm:"primaryKey"`
+	GroupId               int64                  `json:"group_id"`                      // busi group id
+	Cate                  string                 `json:"cate"`                          // alert rule cate (prometheus|elasticsearch)
+	DatasourceIds         string                 `json:"-" gorm:"datasource_ids"`       // datasource ids
+	DatasourceIdsJson     []int64                `json:"datasource_ids" gorm:"-"`       // for fe
+	Cluster               string                 `json:"cluster"`                       // take effect by clusters, seperated by space
+	Name                  string                 `json:"name"`                          // rule name
+	Note                  string                 `json:"note"`                          // will sent in notify
+	Prod                  string                 `json:"prod"`                          // product empty means n9e
+	Algorithm             string                 `json:"algorithm"`                     // algorithm (''|holtwinters), empty means threshold
+	AlgoParams            string                 `json:"-" gorm:"algo_params"`          // params algorithm need
+	AlgoParamsJson        interface{}            `json:"algo_params" gorm:"-"`          // for fe
+	Delay                 int                    `json:"delay"`                         // Time (in seconds) to delay evaluation
+	Severity              int                    `json:"severity"`                      // 1: Emergency 2: Warning 3: Notice
+	Severities            []int                  `json:"severities" gorm:"-"`           // 1: Emergency 2: Warning 3: Notice
+	Disabled              int                    `json:"disabled"`                      // 0: enabled, 1: disabled
+	PromForDuration       int                    `json:"prom_for_duration"`             // prometheus for, unit:s
+	PromQl                string                 `json:"prom_ql"`                       // just one ql
+	RuleConfig            string                 `json:"-" gorm:"rule_config"`          // rule config
+	RuleConfigJson        interface{}            `json:"rule_config" gorm:"-"`          // rule config for fe
+	EventRelabelConfig    []*pconf.RelabelConfig `json:"event_relabel_config" gorm:"-"` // event relabel config
+	PromEvalInterval      int                    `json:"prom_eval_interval"`            // unit:s
+	EnableStime           string                 `json:"-"`                             // split by space: "00:00 10:00 12:00"
+	EnableStimeJSON       string                 `json:"enable_stime" gorm:"-"`         // for fe
+	EnableStimesJSON      []string               `json:"enable_stimes" gorm:"-"`        // for fe
+	EnableEtime           string                 `json:"-"`                             // split by space: "00:00 10:00 12:00"
+	EnableEtimeJSON       string                 `json:"enable_etime" gorm:"-"`         // for fe
+	EnableEtimesJSON      []string               `json:"enable_etimes" gorm:"-"`        // for fe
+	EnableDaysOfWeek      string                 `json:"-"`                             // eg: "0 1 2 3 4 5 6 ; 0 1 2"
+	EnableDaysOfWeekJSON  []string               `json:"enable_days_of_week" gorm:"-"`  // for fe
+	EnableDaysOfWeeksJSON [][]string             `json:"enable_days_of_weeks" gorm:"-"` // for fe
+	EnableInBG            int                    `json:"enable_in_bg"`                  // 0: global 1: enable one busi-group
+	NotifyRecovered       int                    `json:"notify_recovered"`              // whether notify when recovery
+	NotifyChannels        string                 `json:"-"`                             // split by space: sms voice email dingtalk wecom
+	NotifyChannelsJSON    []string               `json:"notify_channels" gorm:"-"`      // for fe
+	NotifyGroups          string                 `json:"-"`                             // split by space: 233 43
+	NotifyGroupsObj       []UserGroup            `json:"notify_groups_obj" gorm:"-"`    // for fe
+	NotifyGroupsJSON      []string               `json:"notify_groups" gorm:"-"`        // for fe
+	NotifyRepeatStep      int                    `json:"notify_repeat_step"`            // notify repeat interval, unit: min
+	NotifyMaxNumber       int                    `json:"notify_max_number"`             // notify: max number
+	RecoverDuration       int64                  `json:"recover_duration"`              // unit: s
+	Callbacks             string                 `json:"-"`                             // split by space: http://a.com/api/x http://a.com/api/y'
+	CallbacksJSON         []string               `json:"callbacks" gorm:"-"`            // for fe
+	RunbookUrl            string                 `json:"runbook_url"`                   // sop url
+	AppendTags            string                 `json:"-"`                             // split by space: service=n9e mod=api
+	AppendTagsJSON        []string               `json:"append_tags" gorm:"-"`          // for fe
+	Annotations           string                 `json:"-"`                             //
+	AnnotationsJSON       map[string]string      `json:"annotations" gorm:"-"`          // for fe
+	ExtraConfig           string                 `json:"-" gorm:"extra_config"`         // extra config
+	ExtraConfigJSON       interface{}            `json:"extra_config" gorm:"-"`         // for fe
+	CreateAt              int64                  `json:"create_at"`
+	CreateBy              string                 `json:"create_by"`
+	UpdateAt              int64                  `json:"update_at"`
+	UpdateBy              string                 `json:"update_by"`
+	UUID                  int64                  `json:"uuid" gorm:"-"` // tpl identifier
+	CurEventCount         int64                  `json:"cur_event_count" gorm:"-"`
+	UpdateByNickname      string                 `json:"update_by_nickname" gorm:"-"` // for fe
+}
+
+type Tpl struct {
+	TplId   int64    `json:"tpl_id"`
+	TplName string   `json:"tpl_name"`
+	Host    []string `json:"host"`
+}
+
+type RuleConfig struct {
+	Version            string                 `json:"version,omitempty"`
+	EventRelabelConfig []*pconf.RelabelConfig `json:"event_relabel_config,omitempty"`
+	TaskTpls           []*Tpl                 `json:"task_tpls,omitempty"`
+	Queries            interface{}            `json:"queries,omitempty"`
+	Triggers           []Trigger              `json:"triggers,omitempty"`
+	Inhibit            bool                   `json:"inhibit,omitempty"`
+	PromQl             string                 `json:"prom_ql,omitempty"`
+	Severity           int                    `json:"severity,omitempty"`
+	AlgoParams         interface{}            `json:"algo_params,omitempty"`
 }
 
 type PromRuleConfig struct {
@@ -119,6 +158,16 @@ type Trigger struct {
 	Mode        int         `json:"mode"`
 	Exp         string      `json:"exp"`
 	Severity    int         `json:"severity"`
+
+	Type     string `json:"type,omitempty"`
+	Duration int    `json:"duration,omitempty"`
+	Percent  int    `json:"percent,omitempty"`
+	Joins    []Join `json:"joins"`
+}
+
+type Join struct {
+	JoinType string   `json:"join_type"`
+	On       []string `json:"on"`
 }
 
 func GetHostsQuery(queries []HostQuery) []map[string]interface{} {
@@ -129,9 +178,10 @@ func GetHostsQuery(queries []HostQuery) []map[string]interface{} {
 		case "group_ids":
 			ids := ParseInt64(q.Values)
 			if q.Op == "==" {
-				m["group_id in (?)"] = ids
+				m["target_busi_group.group_id in (?)"] = ids
 			} else {
-				m["group_id not in (?)"] = ids
+				m["target.ident not in (select target_ident "+
+					"from target_busi_group where group_id in (?))"] = ids
 			}
 		case "tags":
 			lst := []string{}
@@ -145,12 +195,14 @@ func GetHostsQuery(queries []HostQuery) []map[string]interface{} {
 				blank := " "
 				for _, tag := range lst {
 					m["tags like ?"+blank] = "%" + tag + "%"
+					m["host_tags like ?"+blank] = "%" + tag + "%"
 					blank += " "
 				}
 			} else {
 				blank := " "
 				for _, tag := range lst {
 					m["tags not like ?"+blank] = "%" + tag + "%"
+					m["host_tags not like ?"+blank] = "%" + tag + "%"
 					blank += " "
 				}
 			}
@@ -419,6 +471,19 @@ func (ar *AlertRule) UpdateColumn(ctx *ctx.Context, column string, value interfa
 		return DB(ctx).Model(ar).UpdateColumn("annotations", string(b)).Error
 	}
 
+	if column == "annotations" {
+		newAnnotations := value.(map[string]interface{})
+		ar.AnnotationsJSON = make(map[string]string)
+		for k, v := range newAnnotations {
+			ar.AnnotationsJSON[k] = v.(string)
+		}
+		b, err := json.Marshal(ar.AnnotationsJSON)
+		if err != nil {
+			return err
+		}
+		return DB(ctx).Model(ar).UpdateColumn("annotations", string(b)).Error
+	}
+
 	return DB(ctx).Model(ar).UpdateColumn(column, value).Error
 }
 
@@ -621,6 +686,13 @@ func (ar *AlertRule) DB2FE() error {
 	json.Unmarshal([]byte(ar.Annotations), &ar.AnnotationsJSON)
 	json.Unmarshal([]byte(ar.ExtraConfig), &ar.ExtraConfigJSON)
 
+	// 解析 RuleConfig 字段
+	var ruleConfig struct {
+		EventRelabelConfig []*pconf.RelabelConfig `json:"event_relabel_config"`
+	}
+	json.Unmarshal([]byte(ar.RuleConfig), &ruleConfig)
+	ar.EventRelabelConfig = ruleConfig.EventRelabelConfig
+
 	err := ar.FillDatasourceIds()
 	return err
 }
@@ -667,6 +739,25 @@ func AlertRuleExists(ctx *ctx.Context, id, groupId int64, datasourceIds []int64,
 		}
 	}
 	return false, nil
+}
+
+func GetAlertRuleIdsByTaskId(ctx *ctx.Context, taskId int64) ([]int64, error) {
+	tpl := "%\"tpl_id\":" + fmt.Sprint(taskId) + "}%"
+	cb := "{ibex}/" + fmt.Sprint(taskId) + "%"
+	session := DB(ctx).Where("rule_config like ? or callbacks like ?", tpl, cb)
+
+	var lst []AlertRule
+	var ids []int64
+	err := session.Find(&lst).Error
+	if err != nil || len(lst) == 0 {
+		return ids, err
+	}
+
+	for i := 0; i < len(lst); i++ {
+		ids = append(ids, lst[i].Id)
+	}
+
+	return ids, nil
 }
 
 func AlertRuleGets(ctx *ctx.Context, groupId int64) ([]AlertRule, error) {
@@ -730,7 +821,8 @@ func AlertRuleGetsAll(ctx *ctx.Context) ([]*AlertRule, error) {
 	return lst, nil
 }
 
-func AlertRulesGetsBy(ctx *ctx.Context, prods []string, query, algorithm, cluster string, cates []string, disabled int) ([]*AlertRule, error) {
+func AlertRulesGetsBy(ctx *ctx.Context, prods []string, query, algorithm, cluster string,
+	cates []string, disabled int) ([]*AlertRule, error) {
 	session := DB(ctx)
 
 	if len(prods) > 0 {
@@ -1000,4 +1092,20 @@ func GetTargetsOfHostAlertRule(ctx *ctx.Context, engineName string) (map[string]
 	}
 
 	return m, nil
+}
+
+func (ar *AlertRule) Copy(ctx *ctx.Context) (*AlertRule, error) {
+	newAr := &AlertRule{}
+	err := copier.Copy(newAr, ar)
+	if err != nil {
+		logger.Errorf("copy alert rule failed, %v", err)
+	}
+	return newAr, err
+}
+
+func InsertAlertRule(ctx *ctx.Context, ars []*AlertRule) error {
+	if len(ars) == 0 {
+		return nil
+	}
+	return DB(ctx).Create(ars).Error
 }

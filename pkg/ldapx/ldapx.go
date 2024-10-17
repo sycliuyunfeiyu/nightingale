@@ -34,6 +34,7 @@ type Config struct {
 	TLS             bool
 	StartTLS        bool
 	DefaultRoles    []string
+	DefaultTeams    []int64
 	RoleTeamMapping []RoleTeamMapping
 }
 
@@ -42,6 +43,7 @@ type SsoClient struct {
 	Host            string
 	Port            int
 	BaseDn          string
+	BaseDns         []string
 	BindUser        string
 	BindPass        string
 	SyncAdd         bool
@@ -55,6 +57,7 @@ type SsoClient struct {
 	TLS             bool
 	StartTLS        bool
 	DefaultRoles    []string
+	DefaultTeams    []int64
 	RoleTeamMapping map[string]RoleTeamMapping
 
 	Ticker *time.Ticker
@@ -109,6 +112,7 @@ func (s *SsoClient) Reload(cf Config) {
 	s.TLS = cf.TLS
 	s.StartTLS = cf.StartTLS
 	s.DefaultRoles = cf.DefaultRoles
+	s.DefaultTeams = cf.DefaultTeams
 	s.SyncAdd = cf.SyncAddUsers
 	s.SyncDel = cf.SyncDelUsers
 	s.SyncInterval = cf.SyncInterval
@@ -128,6 +132,8 @@ func (s *SsoClient) Reload(cf Config) {
 	if s.SyncInterval > 0 {
 		s.Ticker.Reset(s.SyncInterval * time.Second)
 	}
+
+	s.BaseDns = strings.Split(s.BaseDn, "|")
 }
 
 func (s *SsoClient) Copy() *SsoClient {
@@ -135,8 +141,11 @@ func (s *SsoClient) Copy() *SsoClient {
 
 	newRoles := make([]string, len(s.DefaultRoles))
 	copy(newRoles, s.DefaultRoles)
+	newTeams := make([]int64, len(s.DefaultTeams))
+	copy(newTeams, s.DefaultTeams)
 	lc := *s
 	lc.DefaultRoles = newRoles
+	lc.DefaultTeams = newTeams
 
 	s.RUnlock()
 
@@ -152,25 +161,38 @@ func (s *SsoClient) LoginCheck(user, pass string) (*ldap.SearchResult, error) {
 	}
 	defer conn.Close()
 
-	sr, err := lc.ldapReq(conn, lc.AuthFilter, user)
+	srs, err := lc.ldapReq(conn, lc.AuthFilter, user)
 	if err != nil {
 		return nil, fmt.Errorf("ldap.error: ldap search fail: %v", err)
 	}
 
-	if len(sr.Entries) == 0 {
+	var sr *ldap.SearchResult
+
+	for i := range srs {
+		if srs[i] == nil || len(srs[i].Entries) == 0 {
+			continue
+		}
+
+		// 多个 dn 中，账号的唯一性由 LDAP 保证
+		if len(srs[i].Entries) > 1 {
+			return nil, fmt.Errorf("ldap.error: search user(%s), multi entries found", user)
+		}
+
+		sr = srs[i]
+
+		if err := conn.Bind(srs[i].Entries[0].DN, pass); err != nil {
+			return nil, fmt.Errorf("username or password invalid")
+		}
+
+		for _, info := range srs[i].Entries[0].Attributes {
+			logger.Infof("ldap.info: user(%s) info: %+v", user, info)
+		}
+
+		break
+	}
+
+	if sr == nil {
 		return nil, fmt.Errorf("username or password invalid")
-	}
-
-	if len(sr.Entries) > 1 {
-		return nil, fmt.Errorf("ldap.error: search user(%s), multi entries found", user)
-	}
-
-	if err := conn.Bind(sr.Entries[0].DN, pass); err != nil {
-		return nil, fmt.Errorf("username or password invalid")
-	}
-
-	for _, info := range sr.Entries[0].Attributes {
-		logger.Infof("ldap.info: user(%s) info: %+v", user, info)
 	}
 
 	return sr, nil
@@ -212,21 +234,26 @@ func (s *SsoClient) newLdapConn() (*ldap.Conn, error) {
 	return conn, nil
 }
 
-func (s *SsoClient) ldapReq(conn *ldap.Conn, filter string, values ...interface{}) (*ldap.SearchResult, error) {
-	searchRequest := ldap.NewSearchRequest(
-		s.BaseDn, // The base dn to search
-		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, 0, false,
-		fmt.Sprintf(filter, values...), // The filter to apply
-		s.genLdapAttributeSearchList(), // A list attributes to retrieve
-		nil,
-	)
+func (s *SsoClient) ldapReq(conn *ldap.Conn, filter string, values ...interface{}) ([]*ldap.SearchResult, error) {
+	srs := make([]*ldap.SearchResult, 0, len(s.BaseDns))
 
-	sr, err := conn.Search(searchRequest)
-	if err != nil {
-		return nil, fmt.Errorf("ldap.error: ldap search fail: %v", err)
+	for i := range s.BaseDns {
+		searchRequest := ldap.NewSearchRequest(
+			strings.TrimSpace(s.BaseDns[i]), // The base dn to search
+			ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, 0, false,
+			fmt.Sprintf(filter, values...), // The filter to apply
+			s.genLdapAttributeSearchList(), // A list attributes to retrieve
+			nil,
+		)
+		sr, err := conn.Search(searchRequest)
+		if err != nil {
+			logger.Errorf("ldap.error: ldap search fail: %v", err)
+			continue
+		}
+		srs = append(srs, sr)
 	}
 
-	return sr, nil
+	return srs, nil
 }
 
 // GetUserRolesAndTeams Gets the roles and teams of the user
@@ -291,11 +318,12 @@ func (s *SsoClient) genLdapAttributeSearchList() []string {
 	return ldapAttributes
 }
 
-func LdapLogin(ctx *ctx.Context, username, pass string, defaultRoles []string, ldap *SsoClient) (*models.User, error) {
+func LdapLogin(ctx *ctx.Context, username, pass string, defaultRoles []string, defaultTeams []int64, ldap *SsoClient) (*models.User, error) {
 	sr, err := ldap.LoginCheck(username, pass)
 	if err != nil {
 		return nil, err
 	}
+
 	// copy attributes from ldap
 	ldap.RLock()
 	attrs := ldap.Attributes
@@ -331,6 +359,10 @@ func LdapLogin(ctx *ctx.Context, username, pass string, defaultRoles []string, l
 			}
 		}
 
+		if len(roleTeamMapping.Teams) == 0 {
+			roleTeamMapping.Teams = defaultTeams
+		}
+
 		// Synchronize group information
 		if err = models.UserGroupMemberSync(ctx, roleTeamMapping.Teams, user.Id, coverTeams); err != nil {
 			logger.Errorf("ldap.error: failed to update user(%s) group member err: %+v", user, err)
@@ -345,6 +377,15 @@ func LdapLogin(ctx *ctx.Context, username, pass string, defaultRoles []string, l
 		user.FullSsoFields("ldap", username, nickname, phone, email, roleTeamMapping.Roles)
 		if err = models.DB(ctx).Create(user).Error; err != nil {
 			return nil, errors.WithMessage(err, "failed to add user")
+		}
+
+		if len(roleTeamMapping.Teams) == 0 {
+			for _, gid := range defaultTeams {
+				err = models.UserGroupMemberAdd(ctx, gid, user.Id)
+				if err != nil {
+					logger.Errorf("user:%v gid:%d UserGroupMemberAdd: %s", user, gid, err)
+				}
+			}
 		}
 
 		if err = models.UserGroupMemberSync(ctx, roleTeamMapping.Teams, user.Id, false); err != nil {

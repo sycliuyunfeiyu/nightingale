@@ -78,7 +78,7 @@ OpenRSA = false
 DSN="root:Admin@123@tcp(127.0.0.1:3306)/n9e_v6?charset=utf8mb4&parseTime=True&loc=Local&allowNativePasswords=true"
 # enable debug mode or not
 Debug = false
-# mysql postgres
+# mysql postgres sqlite
 DBType = "mysql"
 # unit: s
 MaxLifetime = 7200

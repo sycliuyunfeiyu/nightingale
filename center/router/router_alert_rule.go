@@ -1,14 +1,23 @@
 package router
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
+	"gopkg.in/yaml.v2"
+
 	"github.com/ccfos/nightingale/v6/models"
+	"github.com/ccfos/nightingale/v6/pushgw/pconf"
+	"github.com/ccfos/nightingale/v6/pushgw/writer"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jinzhu/copier"
+	"github.com/prometheus/prometheus/prompb"
 	"github.com/toolkits/pkg/ginx"
 	"github.com/toolkits/pkg/i18n"
 	"github.com/toolkits/pkg/str"
@@ -28,6 +37,18 @@ func (rt *Router) alertRuleGets(c *gin.Context) {
 	ginx.NewRender(c).Data(ars, err)
 }
 
+func getAlertCueEventTimeRange(c *gin.Context) (stime, etime int64) {
+	stime = ginx.QueryInt64(c, "stime", 0)
+	etime = ginx.QueryInt64(c, "etime", 0)
+	if etime == 0 {
+		etime = time.Now().Unix()
+	}
+	if stime == 0 || stime >= etime {
+		stime = etime - 30*24*int64(time.Hour.Seconds())
+	}
+	return
+}
+
 func (rt *Router) alertRuleGetsByGids(c *gin.Context) {
 	gids := str.IdsInt64(ginx.QueryStr(c, "gids", ""), ",")
 	if len(gids) > 0 {
@@ -42,7 +63,7 @@ func (rt *Router) alertRuleGetsByGids(c *gin.Context) {
 			ginx.Dangerous(err)
 
 			if len(gids) == 0 {
-				ginx.Bomb(http.StatusForbidden, "forbidden")
+				ginx.NewRender(c).Data([]int{}, nil)
 				return
 			}
 		}
@@ -51,9 +72,30 @@ func (rt *Router) alertRuleGetsByGids(c *gin.Context) {
 	ars, err := models.AlertRuleGetsByBGIds(rt.Ctx, gids)
 	if err == nil {
 		cache := make(map[int64]*models.UserGroup)
+		rids := make([]int64, 0, len(ars))
+		names := make([]string, 0, len(ars))
 		for i := 0; i < len(ars); i++ {
 			ars[i].FillNotifyGroups(rt.Ctx, cache)
 			ars[i].FillSeverities()
+			rids = append(rids, ars[i].Id)
+			names = append(names, ars[i].UpdateBy)
+		}
+
+		stime, etime := getAlertCueEventTimeRange(c)
+		cnt := models.AlertCurEventCountByRuleId(rt.Ctx, rids, stime, etime)
+		if cnt != nil {
+			for i := 0; i < len(ars); i++ {
+				ars[i].CurEventCount = cnt[ars[i].Id]
+			}
+		}
+
+		users := models.UserMapGet(rt.Ctx, "username in (?)", names)
+		if users != nil {
+			for i := 0; i < len(ars); i++ {
+				if user, exist := users[ars[i].UpdateBy]; exist {
+					ars[i].UpdateByNickname = user.Nickname
+				}
+			}
 		}
 	}
 	ginx.NewRender(c).Data(ars, err)
@@ -119,6 +161,34 @@ func (rt *Router) alertRuleAddByImport(c *gin.Context) {
 	reterr := rt.alertRuleAdd(lst, username, bgid, c.GetHeader("X-Language"))
 
 	ginx.NewRender(c).Data(reterr, nil)
+}
+
+type promRuleForm struct {
+	Payload       string  `json:"payload" binding:"required"`
+	DatasourceIds []int64 `json:"datasource_ids" binding:"required"`
+	Disabled      int     `json:"disabled" binding:"gte=0,lte=1"`
+}
+
+func (rt *Router) alertRuleAddByImportPromRule(c *gin.Context) {
+	var f promRuleForm
+	ginx.Dangerous(c.BindJSON(&f))
+
+	var pr struct {
+		Groups []models.PromRuleGroup `yaml:"groups"`
+	}
+	err := yaml.Unmarshal([]byte(f.Payload), &pr)
+	if err != nil {
+		ginx.Bomb(http.StatusBadRequest, "invalid yaml format, please use the example format. err: %v", err)
+	}
+
+	if len(pr.Groups) == 0 {
+		ginx.Bomb(http.StatusBadRequest, "input yaml is empty")
+	}
+
+	lst := models.DealPromGroup(pr.Groups, f.DatasourceIds, f.Disabled)
+	username := c.MustGet("username").(string)
+	bgid := ginx.UrlParamInt64(c, "id")
+	ginx.NewRender(c).Data(rt.alertRuleAdd(lst, username, bgid, c.GetHeader("X-Language")), nil)
 }
 
 func (rt *Router) alertRuleAddByService(c *gin.Context) {
@@ -271,6 +341,43 @@ func (rt *Router) alertRulePutFields(c *gin.Context) {
 			continue
 		}
 
+		if f.Action == "update_triggers" {
+			if triggers, has := f.Fields["triggers"]; has {
+				originRule := ar.RuleConfigJson.(map[string]interface{})
+				originRule["triggers"] = triggers
+				b, err := json.Marshal(originRule)
+				ginx.Dangerous(err)
+				ginx.Dangerous(ar.UpdateFieldsMap(rt.Ctx, map[string]interface{}{"rule_config": string(b)}))
+				continue
+			}
+		}
+
+		if f.Action == "annotations_add" {
+			if annotations, has := f.Fields["annotations"]; has {
+				annotationsMap := annotations.(map[string]interface{})
+				for k, v := range annotationsMap {
+					ar.AnnotationsJSON[k] = v.(string)
+				}
+				b, err := json.Marshal(ar.AnnotationsJSON)
+				ginx.Dangerous(err)
+				ginx.Dangerous(ar.UpdateFieldsMap(rt.Ctx, map[string]interface{}{"annotations": string(b)}))
+				continue
+			}
+		}
+
+		if f.Action == "annotations_del" {
+			if annotations, has := f.Fields["annotations"]; has {
+				annotationsKeys := annotations.(map[string]interface{})
+				for key := range annotationsKeys {
+					delete(ar.AnnotationsJSON, key)
+				}
+				b, err := json.Marshal(ar.AnnotationsJSON)
+				ginx.Dangerous(err)
+				ginx.Dangerous(ar.UpdateFieldsMap(rt.Ctx, map[string]interface{}{"annotations": string(b)}))
+				continue
+			}
+		}
+
 		if f.Action == "callback_add" {
 			// 增加一个 callback 地址
 			if callbacks, has := f.Fields["callbacks"]; has {
@@ -312,6 +419,20 @@ func (rt *Router) alertRuleGet(c *gin.Context) {
 
 	err = ar.FillNotifyGroups(rt.Ctx, make(map[int64]*models.UserGroup))
 	ginx.Dangerous(err)
+
+	ginx.NewRender(c).Data(ar, err)
+}
+
+func (rt *Router) alertRulePureGet(c *gin.Context) {
+	arid := ginx.UrlParamInt64(c, "arid")
+
+	ar, err := models.AlertRuleGetById(rt.Ctx, arid)
+	ginx.Dangerous(err)
+
+	if ar == nil {
+		ginx.NewRender(c, http.StatusNotFound).Message("No such AlertRule")
+		return
+	}
 
 	ginx.NewRender(c).Data(ar, err)
 }
@@ -387,4 +508,139 @@ func (rt *Router) alertRuleCallbacks(c *gin.Context) {
 	}
 
 	ginx.NewRender(c).Data(callbacks, nil)
+}
+
+type alertRuleTestForm struct {
+	Configs []*pconf.RelabelConfig `json:"configs"`
+	Tags    []string               `json:"tags"`
+}
+
+func (rt *Router) relabelTest(c *gin.Context) {
+	var f alertRuleTestForm
+	ginx.BindJSON(c, &f)
+
+	if len(f.Tags) == 0 || len(f.Configs) == 0 {
+		ginx.Bomb(http.StatusBadRequest, "relabel config is empty")
+	}
+
+	labels := make([]prompb.Label, len(f.Tags))
+	for i, tag := range f.Tags {
+		label := strings.SplitN(tag, "=", 2)
+		if len(label) != 2 {
+			ginx.Bomb(http.StatusBadRequest, "tag:%s format error", tag)
+		}
+
+		labels[i] = prompb.Label{Name: label[0], Value: label[1]}
+	}
+
+	for i := 0; i < len(f.Configs); i++ {
+		if f.Configs[i].Replacement == "" {
+			f.Configs[i].Replacement = "$1"
+		}
+
+		if f.Configs[i].Separator == "" {
+			f.Configs[i].Separator = ";"
+		}
+
+		if f.Configs[i].Regex == "" {
+			f.Configs[i].Regex = "(.*)"
+		}
+	}
+
+	relabels := writer.Process(labels, f.Configs...)
+
+	var tags []string
+	for _, label := range relabels {
+		tags = append(tags, fmt.Sprintf("%s=%s", label.Name, label.Value))
+	}
+
+	ginx.NewRender(c).Data(tags, nil)
+}
+
+type identListForm struct {
+	Ids       []int64  `json:"ids"`
+	IdentList []string `json:"ident_list"`
+}
+
+func containsIdentOperator(s string) bool {
+	pattern := `ident\s*(!=|!~|=~)`
+	matched, err := regexp.MatchString(pattern, s)
+	if err != nil {
+		return false
+	}
+	return matched
+}
+
+func (rt *Router) cloneToMachine(c *gin.Context) {
+	var f identListForm
+	ginx.BindJSON(c, &f)
+
+	if len(f.IdentList) == 0 {
+		ginx.Bomb(http.StatusBadRequest, "ident_list is empty")
+	}
+
+	alertRules, err := models.AlertRuleGetsByIds(rt.Ctx, f.Ids)
+	ginx.Dangerous(err)
+
+	re := regexp.MustCompile(`ident\s*=\s*\\".*?\\"`)
+
+	user := c.MustGet("username").(string)
+	now := time.Now().Unix()
+
+	newRules := make([]*models.AlertRule, 0)
+
+	reterr := make(map[string]map[string]string)
+
+	for i := range alertRules {
+		errMsg := make(map[string]string)
+
+		if alertRules[i].Cate != "prometheus" {
+			errMsg["all"] = "Only Prometheus rule can be cloned to machines"
+			reterr[alertRules[i].Name] = errMsg
+			continue
+		}
+
+		if containsIdentOperator(alertRules[i].RuleConfig) {
+			errMsg["all"] = "promql is missing ident"
+			reterr[alertRules[i].Name] = errMsg
+			continue
+		}
+
+		for j := range f.IdentList {
+			alertRules[i].RuleConfig = re.ReplaceAllString(alertRules[i].RuleConfig, fmt.Sprintf(`ident=\"%s\"`, f.IdentList[j]))
+
+			newRule := &models.AlertRule{}
+			if err := copier.Copy(newRule, alertRules[i]); err != nil {
+				errMsg[f.IdentList[j]] = fmt.Sprintf("fail to clone rule, err: %s", err)
+				continue
+			}
+
+			newRule.Id = 0
+			newRule.Name = alertRules[i].Name + "_" + f.IdentList[j]
+			newRule.CreateBy = user
+			newRule.UpdateBy = user
+			newRule.UpdateAt = now
+			newRule.CreateAt = now
+			newRule.RuleConfig = alertRules[i].RuleConfig
+
+			exist, err := models.AlertRuleExists(rt.Ctx, 0, newRule.GroupId, newRule.DatasourceIdsJson, newRule.Name)
+			if err != nil {
+				errMsg[f.IdentList[j]] = err.Error()
+				continue
+			}
+
+			if exist {
+				errMsg[f.IdentList[j]] = fmt.Sprintf("rule already exists, ruleName: %s", newRule.Name)
+				continue
+			}
+
+			newRules = append(newRules, newRule)
+		}
+
+		if len(errMsg) > 0 {
+			reterr[alertRules[i].Name] = errMsg
+		}
+	}
+
+	ginx.NewRender(c).Data(reterr, models.InsertAlertRule(rt.Ctx, newRules))
 }

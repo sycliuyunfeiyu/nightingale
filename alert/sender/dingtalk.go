@@ -3,13 +3,8 @@ package sender
 import (
 	"html/template"
 	"strings"
-	"time"
 
-	"github.com/ccfos/nightingale/v6/alert/astats"
 	"github.com/ccfos/nightingale/v6/models"
-	"github.com/ccfos/nightingale/v6/pkg/poster"
-
-	"github.com/toolkits/pkg/logger"
 )
 
 type dingtalkMarkdown struct {
@@ -28,6 +23,10 @@ type dingtalk struct {
 	At       dingtalkAt       `json:"at"`
 }
 
+var (
+	_ CallBacker = (*DingtalkSender)(nil)
+)
+
 type DingtalkSender struct {
 	tpl *template.Template
 }
@@ -37,13 +36,13 @@ func (ds *DingtalkSender) Send(ctx MessageContext) {
 		return
 	}
 
-	urls, ats := ds.extract(ctx.Users)
+	urls, ats, tokens := ds.extract(ctx.Users)
 	if len(urls) == 0 {
 		return
 	}
 	message := BuildTplMessage(models.Dingtalk, ds.tpl, ctx.Events)
 
-	for _, url := range urls {
+	for i, url := range urls {
 		var body dingtalk
 		// NoAt in url
 		if strings.Contains(url, "noat=1") {
@@ -68,14 +67,47 @@ func (ds *DingtalkSender) Send(ctx MessageContext) {
 			}
 		}
 
-		doSend(url, body, models.Dingtalk, ctx.Stats)
+		doSendAndRecord(ctx.Ctx, url, tokens[i], body, models.Dingtalk, ctx.Stats, ctx.Events[0])
 	}
 }
 
+func (ds *DingtalkSender) CallBack(ctx CallBackContext) {
+	if len(ctx.Events) == 0 || len(ctx.CallBackURL) == 0 {
+		return
+	}
+
+	body := dingtalk{
+		Msgtype: "markdown",
+		Markdown: dingtalkMarkdown{
+			Title: ctx.Events[0].RuleName,
+		},
+	}
+
+	ats := ExtractAtsParams(ctx.CallBackURL)
+	message := BuildTplMessage(models.Dingtalk, ds.tpl, ctx.Events)
+
+	if len(ats) > 0 {
+		body.Markdown.Text = message + "\n@" + strings.Join(ats, "@")
+		body.At = dingtalkAt{
+			AtMobiles: ats,
+			IsAtAll:   false,
+		}
+	} else {
+		// NoAt in url
+		body.Markdown.Text = message
+	}
+
+	doSendAndRecord(ctx.Ctx, ctx.CallBackURL, ctx.CallBackURL, body,
+		"callback", ctx.Stats, ctx.Events[0])
+
+	ctx.Stats.AlertNotifyTotal.WithLabelValues("rule_callback").Inc()
+}
+
 // extract urls and ats from Users
-func (ds *DingtalkSender) extract(users []*models.User) ([]string, []string) {
+func (ds *DingtalkSender) extract(users []*models.User) ([]string, []string, []string) {
 	urls := make([]string, 0, len(users))
 	ats := make([]string, 0, len(users))
+	tokens := make([]string, 0, len(users))
 
 	for _, user := range users {
 		if user.Phone != "" {
@@ -87,19 +119,8 @@ func (ds *DingtalkSender) extract(users []*models.User) ([]string, []string) {
 				url = "https://oapi.dingtalk.com/robot/send?access_token=" + token
 			}
 			urls = append(urls, url)
+			tokens = append(tokens, token)
 		}
 	}
-	return urls, ats
-}
-
-func doSend(url string, body interface{}, channel string, stats *astats.Stats) {
-	stats.AlertNotifyTotal.WithLabelValues(channel).Inc()
-
-	res, code, err := poster.PostJSON(url, time.Second*5, body, 3)
-	if err != nil {
-		logger.Errorf("%s_sender: result=fail url=%s code=%d error=%v req:%v response=%s", channel, url, code, err, body, string(res))
-		stats.AlertNotifyErrorTotal.WithLabelValues(channel).Inc()
-	} else {
-		logger.Infof("%s_sender: result=succ url=%s code=%d req:%v response=%s", channel, url, code, body, string(res))
-	}
+	return urls, ats, tokens
 }

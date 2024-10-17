@@ -171,8 +171,7 @@ func InitNotifyConfig(c *ctx.Context, tplDir string) {
 
 	if cval == "" {
 		var notifyContacts []NotifyContact
-		contacts := []string{DingtalkKey, WecomKey, FeishuKey, MmKey, TelegramKey}
-		for _, contact := range contacts {
+		for _, contact := range DefaultContacts {
 			notifyContacts = append(notifyContacts, NotifyContact{Ident: contact, Name: contact, BuiltIn: true})
 		}
 
@@ -181,6 +180,35 @@ func InitNotifyConfig(c *ctx.Context, tplDir string) {
 		if err != nil {
 			logger.Errorf("failed to set notify contact config: %v", err)
 			return
+		}
+	} else {
+		var contacts []NotifyContact
+		if err = json.Unmarshal([]byte(cval), &contacts); err != nil {
+			logger.Errorf("failed to unmarshal notify channel config: %v", err)
+			return
+		}
+		contactMap := make(map[string]struct{})
+		for _, contact := range contacts {
+			contactMap[contact.Ident] = struct{}{}
+		}
+
+		var newContacts []NotifyContact
+		for _, contact := range DefaultContacts {
+			if _, ok := contactMap[contact]; !ok {
+				newContacts = append(newContacts, NotifyContact{Ident: contact, Name: contact, BuiltIn: true})
+			}
+		}
+		if len(newContacts) > 0 {
+			contacts = append(contacts, newContacts...)
+			data, err := json.Marshal(contacts)
+			if err != nil {
+				logger.Errorf("failed to marshal contacts: %v", err)
+				return
+			}
+			if err = ConfigsSet(c, NOTIFYCONTACT, string(data)); err != nil {
+				logger.Errorf("failed to set notify contact config: %v", err)
+				return
+			}
 		}
 	}
 
@@ -229,18 +257,33 @@ func getNotifyTpl(tplDir string) map[string]string {
 }
 
 var TplMap = map[string]string{
-	Dingtalk: `#### {{if .IsRecovered}}<font color="#008800">S{{.Severity}} - Recovered - {{.RuleName}}</font>{{else}}<font color="#FF0000">S{{.Severity}} - Triggered - {{.RuleName}}</font>{{end}}
+	Dingtalk: `#### {{if .IsRecovered}}<font color="#008800">💚{{.RuleName}}</font>{{else}}<font color="#FF0000">💔{{.RuleName}}</font>{{end}}
 
 ---
-
-- **规则标题**: {{.RuleName}}{{if .RuleNote}}
-- **规则备注**: {{.RuleNote}}{{end}}
-{{if not .IsRecovered}}- **触发时值**: {{.TriggerValue}}{{end}}
-{{if .TargetIdent}}- **监控对象**: {{.TargetIdent}}{{end}}
-- **监控指标**: {{.TagsJSON}}
-- {{if .IsRecovered}}**恢复时间**: {{timeformat .LastEvalTime}}{{else}}**触发时间**: {{timeformat .TriggerTime}}{{end}}
-- **发送时间**: {{timestamp}}
-	`,
+{{$time_duration := sub now.Unix .FirstTriggerTime }}{{if .IsRecovered}}{{$time_duration = sub .LastEvalTime .FirstTriggerTime }}{{end}}
+- **告警级别**: {{.Severity}}级
+{{- if .RuleNote}}
+- **规则备注**: {{.RuleNote}}
+{{- end}}
+{{- if not .IsRecovered}}
+- **当次触发时值**: {{.TriggerValue}}
+- **当次触发时间**: {{timeformat .TriggerTime}}
+- **告警持续时长**: {{humanizeDurationInterface $time_duration}}
+{{- else}}
+{{- if .AnnotationsJSON.recovery_value}}
+- **恢复时值**: {{formatDecimal .AnnotationsJSON.recovery_value 4}}
+{{- end}}
+- **恢复时间**: {{timeformat .LastEvalTime}}
+- **告警持续时长**: {{humanizeDurationInterface $time_duration}}
+{{- end}}
+- **告警事件标签**:
+{{- range $key, $val := .TagsMap}}
+{{- if ne $key "rulename" }}
+	- {{$key}}: {{$val}}
+{{- end}}
+{{- end}}
+{{$domain := "http://请联系管理员修改通知模板将域名替换为实际的域名" }}   
+[事件详情]({{$domain}}/alert-his-events/{{.Id}})|[屏蔽1小时]({{$domain}}/alert-mutes/add?busiGroup={{.GroupId}}&cate={{.Cate}}&datasource_ids={{.DatasourceId}}&prod={{.RuleProd}}{{range $key, $value := .TagsMap}}&tags={{$key}}%3D{{$value}}{{end}})|[查看曲线]({{$domain}}/metric/explorer?data_source_id={{.DatasourceId}}&data_source_name=prometheus&mode=graph&prom_ql={{.PromQl}})`,
 	Email: `<!DOCTYPE html>
 	<html lang="en">
 	<head>
@@ -464,7 +507,10 @@ var TplMap = map[string]string{
 监控指标: {{.TagsJSON}}
 {{if .IsRecovered}}恢复时间：{{timeformat .LastEvalTime}}{{else}}触发时间: {{timeformat .TriggerTime}}
 触发时值: {{.TriggerValue}}{{end}}
-发送时间: {{timestamp}}`,
+发送时间: {{timestamp}}
+{{$domain := "http://请联系管理员修改通知模板将域名替换为实际的域名" }}   
+事件详情: {{$domain}}/alert-his-events/{{.Id}}
+屏蔽1小时: {{$domain}}/alert-mutes/add?busiGroup={{.GroupId}}&cate={{.Cate}}&datasource_ids={{.DatasourceId}}&prod={{.RuleProd}}{{range $key, $value := .TagsMap}}&tags={{$key}}%3D{{$value}}{{end}}`,
 	FeishuCard: `{{ if .IsRecovered }}
 {{- if ne .Cate "host"}}
 **告警集群:** {{.Cluster}}{{end}}   
@@ -481,7 +527,9 @@ var TplMap = map[string]string{
 **发送时间:** {{timestamp}}   
 **触发时值:** {{.TriggerValue}}   
 {{if .RuleNote }}**告警描述:** **{{.RuleNote}}**{{end}}   
-{{- end -}}`,
+{{- end -}}
+{{$domain := "http://请联系管理员修改通知模板将域名替换为实际的域名" }}   
+[事件详情]({{$domain}}/alert-his-events/{{.Id}})|[屏蔽1小时]({{$domain}}/alert-mutes/add?busiGroup={{.GroupId}}&cate={{.Cate}}&datasource_ids={{.DatasourceId}}&prod={{.RuleProd}}{{range $key, $value := .TagsMap}}&tags={{$key}}%3D{{$value}}{{end}})|[查看曲线]({{$domain}}/metric/explorer?data_source_id={{.DatasourceId}}&data_source_name=prometheus&mode=graph&prom_ql={{.PromQl}})`,
 	EmailSubject: `{{if .IsRecovered}}Recovered{{else}}Triggered{{end}}: {{.RuleName}} {{.TagsJSON}}`,
 	Mm: `级别状态: S{{.Severity}} {{if .IsRecovered}}Recovered{{else}}Triggered{{end}}   
 规则名称: {{.RuleName}}{{if .RuleNote}}   
@@ -507,5 +555,38 @@ var TplMap = map[string]string{
 **触发时值**: {{.TriggerValue}}{{end}}   
 {{if .IsRecovered}}**恢复时间**: {{timeformat .LastEvalTime}}{{else}}**首次触发时间**: {{timeformat .FirstTriggerTime}}{{end}}   
 {{$time_duration := sub now.Unix .FirstTriggerTime }}{{if .IsRecovered}}{{$time_duration = sub .LastEvalTime .FirstTriggerTime }}{{end}}**距离首次告警**: {{humanizeDurationInterface $time_duration}}
-**发送时间**: {{timestamp}}`,
+**发送时间**: {{timestamp}}
+{{$domain := "http://请联系管理员修改通知模板将域名替换为实际的域名" }}   
+[事件详情]({{$domain}}/alert-his-events/{{.Id}})|[屏蔽1小时]({{$domain}}/alert-mutes/add?busiGroup={{.GroupId}}&cate={{.Cate}}&datasource_ids={{.DatasourceId}}&prod={{.RuleProd}}{{range $key, $value := .TagsMap}}&tags={{$key}}%3D{{$value}}{{end}})|[查看曲线]({{$domain}}/metric/explorer?data_source_id={{.DatasourceId}}&data_source_name=prometheus&mode=graph&prom_ql={{.PromQl}})`,
+	Lark: `级别状态: S{{.Severity}} {{if .IsRecovered}}Recovered{{else}}Triggered{{end}}   
+规则名称: {{.RuleName}}{{if .RuleNote}}   
+规则备注: {{.RuleNote}}{{end}}   
+监控指标: {{.TagsJSON}}
+{{if .IsRecovered}}恢复时间：{{timeformat .LastEvalTime}}{{else}}触发时间: {{timeformat .TriggerTime}}
+触发时值: {{.TriggerValue}}{{end}}
+发送时间: {{timestamp}}
+{{$domain := "http://请联系管理员修改通知模板将域名替换为实际的域名" }}   
+事件详情: {{$domain}}/alert-his-events/{{.Id}}
+屏蔽1小时: {{$domain}}/alert-mutes/add?busiGroup={{.GroupId}}&cate={{.Cate}}&datasource_ids={{.DatasourceId}}&prod={{.RuleProd}}{{range $key, $value := .TagsMap}}&tags={{$key}}%3D{{$value}}{{end}}`,
+	LarkCard: `{{ if .IsRecovered }}
+{{- if ne .Cate "host"}}
+**告警集群:** {{.Cluster}}{{end}}   
+**级别状态:** S{{.Severity}} Recovered   
+**告警名称:** {{.RuleName}}   
+**恢复时间:** {{timeformat .LastEvalTime}}   
+{{$time_duration := sub now.Unix .FirstTriggerTime }}{{if .IsRecovered}}{{$time_duration = sub .LastEvalTime .FirstTriggerTime }}{{end}}**持续时长**: {{humanizeDurationInterface $time_duration}}   
+**告警描述:** **服务已恢复**   
+{{- else }}
+{{- if ne .Cate "host"}}   
+**告警集群:** {{.Cluster}}{{end}}   
+**级别状态:** S{{.Severity}} Triggered   
+**告警名称:** {{.RuleName}}   
+**触发时间:** {{timeformat .TriggerTime}}   
+**发送时间:** {{timestamp}}   
+**触发时值:** {{.TriggerValue}}
+{{$time_duration := sub now.Unix .FirstTriggerTime }}{{if .IsRecovered}}{{$time_duration = sub .LastEvalTime .FirstTriggerTime }}{{end}}**持续时长**: {{humanizeDurationInterface $time_duration}}   
+{{if .RuleNote }}**告警描述:** **{{.RuleNote}}**{{end}}   
+{{- end -}}
+{{$domain := "http://请联系管理员修改通知模板将域名替换为实际的域名" }}   
+[事件详情]({{$domain}}/alert-his-events/{{.Id}})|[屏蔽1小时]({{$domain}}/alert-mutes/add?busiGroup={{.GroupId}}&cate={{.Cate}}&datasource_ids={{.DatasourceId}}&prod={{.RuleProd}}{{range $key, $value := .TagsMap}}&tags={{$key}}%3D{{$value}}{{end}})|[查看曲线]({{$domain}}/metric/explorer?data_source_id={{.DatasourceId}}&data_source_name=prometheus&mode=graph&prom_ql={{.PromQl}})`,
 }

@@ -54,13 +54,17 @@ func (rt *Router) alertHisEventsList(c *gin.Context) {
 		cates = strings.Split(cate, ",")
 	}
 
+	ruleId := ginx.QueryInt64(c, "rid", 0)
+
 	bgids, err := GetBusinessGroupIds(c, rt.Ctx, rt.Center.EventHistoryGroupView)
 	ginx.Dangerous(err)
 
-	total, err := models.AlertHisEventTotal(rt.Ctx, prods, bgids, stime, etime, severity, recovered, dsIds, cates, query)
+	total, err := models.AlertHisEventTotal(rt.Ctx, prods, bgids, stime, etime, severity,
+		recovered, dsIds, cates, ruleId, query)
 	ginx.Dangerous(err)
 
-	list, err := models.AlertHisEventGets(rt.Ctx, prods, bgids, stime, etime, severity, recovered, dsIds, cates, query, limit, ginx.Offset(c, limit))
+	list, err := models.AlertHisEventGets(rt.Ctx, prods, bgids, stime, etime, severity, recovered,
+		dsIds, cates, ruleId, query, limit, ginx.Offset(c, limit))
 	ginx.Dangerous(err)
 
 	cache := make(map[int64]*models.UserGroup)
@@ -87,15 +91,27 @@ func (rt *Router) alertHisEventGet(c *gin.Context) {
 		rt.bgroCheck(c, event.GroupId)
 	}
 
+	ruleConfig, needReset := models.FillRuleConfigTplName(rt.Ctx, event.RuleConfig)
+	if needReset {
+		event.RuleConfigJson = ruleConfig
+	}
+
 	ginx.NewRender(c).Data(event, err)
 }
 
 func GetBusinessGroupIds(c *gin.Context, ctx *ctx.Context, eventHistoryGroupView bool) ([]int64, error) {
 	bgid := ginx.QueryInt64(c, "bgid", 0)
 	var bgids []int64
-	user := c.MustGet("user").(*models.User)
 
-	if !eventHistoryGroupView || user.IsAdmin() {
+	if !eventHistoryGroupView || strings.HasPrefix(c.Request.URL.Path, "/v1") {
+		if bgid > 0 {
+			return []int64{bgid}, nil
+		}
+		return bgids, nil
+	}
+
+	user := c.MustGet("user").(*models.User)
+	if user.IsAdmin() {
 		if bgid > 0 {
 			return []int64{bgid}, nil
 		}

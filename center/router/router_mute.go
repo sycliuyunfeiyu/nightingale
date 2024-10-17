@@ -35,7 +35,7 @@ func (rt *Router) alertMuteGetsByGids(c *gin.Context) {
 			ginx.Dangerous(err)
 
 			if len(gids) == 0 {
-				ginx.Bomb(http.StatusForbidden, "forbidden")
+				ginx.NewRender(c).Data([]int{}, nil)
 				return
 			}
 		}
@@ -95,7 +95,8 @@ func (rt *Router) alertMuteAddByService(c *gin.Context) {
 	var f models.AlertMute
 	ginx.BindJSON(c, &f)
 
-	ginx.NewRender(c).Message(f.Add(rt.Ctx))
+	err := f.Add(rt.Ctx)
+	ginx.NewRender(c).Data(f.Id, err)
 }
 
 func (rt *Router) alertMuteDel(c *gin.Context) {

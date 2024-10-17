@@ -18,6 +18,9 @@ import (
 	"github.com/ccfos/nightingale/v6/models"
 	"github.com/ccfos/nightingale/v6/pkg/ctx"
 	"github.com/ccfos/nightingale/v6/pkg/tplx"
+	"github.com/ccfos/nightingale/v6/pushgw/writer"
+
+	"github.com/prometheus/prometheus/prompb"
 	"github.com/toolkits/pkg/logger"
 	"github.com/toolkits/pkg/str"
 )
@@ -50,10 +53,11 @@ type Processor struct {
 	datasourceId int64
 	EngineName   string
 
-	rule     *models.AlertRule
-	fires    *AlertCurEventMap
-	pendings *AlertCurEventMap
-	inhibit  bool
+	rule                 *models.AlertRule
+	fires                *AlertCurEventMap
+	pendings             *AlertCurEventMap
+	pendingsUseByRecover *AlertCurEventMap
+	inhibit              bool
 
 	tagsMap    map[string]string
 	tagsArr    []string
@@ -145,9 +149,10 @@ func (p *Processor) Handle(anomalyPoints []common.AnomalyPoint, from string, inh
 		// 如果 event 被 mute 了,本质也是 fire 的状态,这里无论如何都添加到 alertingKeys 中,防止 fire 的事件自动恢复了
 		hash := event.Hash
 		alertingKeys[hash] = struct{}{}
-		if mute.IsMuted(cachedRule, event, p.TargetCache, p.alertMuteCache) {
+		isMuted, detail := mute.IsMuted(cachedRule, event, p.TargetCache, p.alertMuteCache)
+		if isMuted {
 			p.Stats.CounterMuteTotal.WithLabelValues(event.GroupName).Inc()
-			logger.Debugf("rule_eval:%s event:%v is muted", p.Key(), event)
+			logger.Debugf("rule_eval:%s event:%v is muted, detail:%s", p.Key(), event, detail)
 			continue
 		}
 
@@ -207,6 +212,14 @@ func (p *Processor) BuildEvent(anomalyPoint common.AnomalyPoint, from string, no
 	event.ExtraConfig = p.rule.ExtraConfigJSON
 	event.PromQl = anomalyPoint.Query
 
+	if p.target != "" {
+		if pt, exist := p.TargetCache.Get(p.target); exist {
+			event.Target = pt
+		} else {
+			logger.Infof("Target[ident: %s] doesn't exist in cache.", p.target)
+		}
+	}
+
 	if event.TriggerValues != "" && strings.Count(event.TriggerValues, "$") > 1 {
 		// TriggerValues 有多个变量，将多个变量都放到 TriggerValue 中
 		event.TriggerValue = event.TriggerValues
@@ -217,7 +230,55 @@ func (p *Processor) BuildEvent(anomalyPoint common.AnomalyPoint, from string, no
 	} else {
 		event.LastEvalTime = event.TriggerTime
 	}
+
+	// 生成事件之后，立马进程 relabel 处理
+	Relabel(p.rule, event)
 	return event
+}
+
+func Relabel(rule *models.AlertRule, event *models.AlertCurEvent) {
+	if rule == nil {
+		return
+	}
+
+	if len(rule.EventRelabelConfig) == 0 {
+		return
+	}
+
+	// need to keep the original label
+	event.OriginalTags = event.Tags
+	event.OriginalTagsJSON = make([]string, len(event.TagsJSON))
+
+	labels := make([]prompb.Label, len(event.TagsJSON))
+	for i, tag := range event.TagsJSON {
+		label := strings.SplitN(tag, "=", 2)
+		event.OriginalTagsJSON[i] = tag
+		labels[i] = prompb.Label{Name: label[0], Value: label[1]}
+	}
+
+	for i := 0; i < len(rule.EventRelabelConfig); i++ {
+		if rule.EventRelabelConfig[i].Replacement == "" {
+			rule.EventRelabelConfig[i].Replacement = "$1"
+		}
+
+		if rule.EventRelabelConfig[i].Separator == "" {
+			rule.EventRelabelConfig[i].Separator = ";"
+		}
+
+		if rule.EventRelabelConfig[i].Regex == "" {
+			rule.EventRelabelConfig[i].Regex = "(.*)"
+		}
+	}
+
+	// relabel process
+	relabels := writer.Process(labels, rule.EventRelabelConfig...)
+	event.TagsJSON = make([]string, len(relabels))
+	event.TagsMap = make(map[string]string, len(relabels))
+	for i, label := range relabels {
+		event.TagsJSON[i] = fmt.Sprintf("%s=%s", label.Name, label.Value)
+		event.TagsMap[label.Name] = label.Value
+	}
+	event.Tags = strings.Join(event.TagsJSON, ",,")
 }
 
 func (p *Processor) HandleRecover(alertingKeys map[string]struct{}, now int64, inhibit bool) {
@@ -270,6 +331,7 @@ func (p *Processor) HandleRecoverEvent(hashArr []string, now int64, inhibit bool
 			// hash 对应的恢复事件的被抑制了，把之前的事件删除
 			p.fires.Delete(e.Hash)
 			p.pendings.Delete(e.Hash)
+			models.AlertCurEventDelByHash(p.ctx, e.Hash)
 			eventMap[event.Tags] = *event
 		}
 	}
@@ -289,11 +351,22 @@ func (p *Processor) RecoverSingle(hash string, now int64, value *string, values 
 	if !has {
 		return
 	}
+
 	// 如果配置了留观时长，就不能立马恢复了
-	if cachedRule.RecoverDuration > 0 && now-event.LastEvalTime < cachedRule.RecoverDuration {
-		logger.Debugf("rule_eval:%s event:%v not recover", p.Key(), event)
-		return
+	if cachedRule.RecoverDuration > 0 {
+		lastPendingEvent, has := p.pendingsUseByRecover.Get(hash)
+		if !has {
+			// 说明没有产生过异常点，就不需要恢复了
+			logger.Debugf("rule_eval:%s event:%v do not has pending event, not recover", p.Key(), event)
+			return
+		}
+
+		if now-lastPendingEvent.LastEvalTime < cachedRule.RecoverDuration {
+			logger.Debugf("rule_eval:%s event:%v not recover", p.Key(), event)
+			return
+		}
 	}
+
 	if value != nil {
 		event.TriggerValue = *value
 		if len(values) > 0 {
@@ -305,6 +378,7 @@ func (p *Processor) RecoverSingle(hash string, now int64, value *string, values 
 	// 我确实无法分辨，是prom中有值但是未满足阈值所以没返回，还是prom中确实丢了一些点导致没有数据可以返回，尴尬
 	p.fires.Delete(hash)
 	p.pendings.Delete(hash)
+	p.pendingsUseByRecover.Delete(hash)
 
 	// 可能是因为调整了promql才恢复的，所以事件里边要体现最新的promql，否则用户会比较困惑
 	// 当然，其实rule的各个字段都可能发生变化了，都更新一下吧
@@ -324,6 +398,13 @@ func (p *Processor) handleEvent(events []*models.AlertCurEvent) {
 		if event == nil {
 			continue
 		}
+
+		if _, has := p.pendingsUseByRecover.Get(event.Hash); has {
+			p.pendingsUseByRecover.UpdateLastEvalTime(event.Hash, event.LastEvalTime)
+		} else {
+			p.pendingsUseByRecover.Set(event.Hash, event)
+		}
+
 		if p.rule.PromForDuration == 0 {
 			fireEvents = append(fireEvents, event)
 			if severity > event.Severity {
@@ -332,7 +413,7 @@ func (p *Processor) handleEvent(events []*models.AlertCurEvent) {
 			continue
 		}
 
-		var preTriggerTime int64
+		var preTriggerTime int64 // 第一个 pending event 的触发时间
 		preEvent, has := p.pendings.Get(event.Hash)
 		if has {
 			p.pendings.UpdateLastEvalTime(event.Hash, event.LastEvalTime)
@@ -424,6 +505,7 @@ func (p *Processor) pushEventToQueue(e *models.AlertCurEvent) {
 
 func (p *Processor) RecoverAlertCurEventFromDb() {
 	p.pendings = NewAlertCurEventMap(nil)
+	p.pendingsUseByRecover = NewAlertCurEventMap(nil)
 
 	curEvents, err := models.AlertCurEventGetByRuleIdAndDsId(p.ctx, p.rule.Id, p.datasourceId)
 	if err != nil {
@@ -434,6 +516,7 @@ func (p *Processor) RecoverAlertCurEventFromDb() {
 	}
 
 	fireMap := make(map[string]*models.AlertCurEvent)
+	pendingsUseByRecoverMap := make(map[string]*models.AlertCurEvent)
 	for _, event := range curEvents {
 		if event.Cate == models.HOST {
 			target, exists := p.TargetCache.Get(event.TargetIdent)
@@ -444,10 +527,20 @@ func (p *Processor) RecoverAlertCurEventFromDb() {
 		}
 
 		event.DB2Mem()
+		target, exists := p.TargetCache.Get(event.TargetIdent)
+		if exists {
+			event.Target = target
+		}
+
 		fireMap[event.Hash] = event
+		e := *event
+		pendingsUseByRecoverMap[event.Hash] = &e
 	}
 
 	p.fires = NewAlertCurEventMap(fireMap)
+
+	// 修改告警规则，或者进程重启之后，需要重新加载 pendingsUseByRecover
+	p.pendingsUseByRecover = NewAlertCurEventMap(pendingsUseByRecoverMap)
 }
 
 func (p *Processor) fillTags(anomalyPoint common.AnomalyPoint) {
@@ -523,6 +616,7 @@ func (p *Processor) mayHandleGroup() {
 func (p *Processor) DeleteProcessEvent(hash string) {
 	p.fires.Delete(hash)
 	p.pendings.Delete(hash)
+	p.pendingsUseByRecover.Delete(hash)
 }
 
 func labelMapToArr(m map[string]string) []string {

@@ -48,6 +48,8 @@ type AlertHisEvent struct {
 	LastEvalTime       int64             `json:"last_eval_time"`
 	Tags               string            `json:"-"`
 	TagsJSON           []string          `json:"tags" gorm:"-"`
+	OriginalTags       string            `json:"-"`                       // for db
+	OriginalTagsJSON   []string          `json:"original_tags"  gorm:"-"` // for fe
 	Annotations        string            `json:"-"`
 	AnnotationsJSON    map[string]string `json:"annotations" gorm:"-"` // for fe
 	NotifyCurNumber    int               `json:"notify_cur_number"`    // notify: current number
@@ -68,6 +70,7 @@ func (e *AlertHisEvent) DB2FE() {
 	e.NotifyGroupsJSON = strings.Fields(e.NotifyGroups)
 	e.CallbacksJSON = strings.Fields(e.Callbacks)
 	e.TagsJSON = strings.Split(e.Tags, ",,")
+	e.OriginalTagsJSON = strings.Split(e.OriginalTags, ",,")
 
 	if len(e.Annotations) > 0 {
 		err := json.Unmarshal([]byte(e.Annotations), &e.AnnotationsJSON)
@@ -114,7 +117,13 @@ func (e *AlertHisEvent) FillNotifyGroups(ctx *ctx.Context, cache map[int64]*User
 	return nil
 }
 
-func AlertHisEventTotal(ctx *ctx.Context, prods []string, bgids []int64, stime, etime int64, severity int, recovered int, dsIds []int64, cates []string, query string) (int64, error) {
+// func (e *AlertHisEvent) FillTaskTplName(ctx *ctx.Context, cache map[int64]*UserGroup) error {
+
+// }
+
+func AlertHisEventTotal(
+	ctx *ctx.Context, prods []string, bgids []int64, stime, etime int64, severity int,
+	recovered int, dsIds []int64, cates []string, ruleId int64, query string) (int64, error) {
 	session := DB(ctx).Model(&AlertHisEvent{}).Where("last_eval_time between ? and ?", stime, etime)
 
 	if len(prods) > 0 {
@@ -141,6 +150,10 @@ func AlertHisEventTotal(ctx *ctx.Context, prods []string, bgids []int64, stime, 
 		session = session.Where("cate in ?", cates)
 	}
 
+	if ruleId > 0 {
+		session = session.Where("rule_id = ?", ruleId)
+	}
+
 	if query != "" {
 		arr := strings.Fields(query)
 		for i := 0; i < len(arr); i++ {
@@ -152,7 +165,9 @@ func AlertHisEventTotal(ctx *ctx.Context, prods []string, bgids []int64, stime, 
 	return Count(session)
 }
 
-func AlertHisEventGets(ctx *ctx.Context, prods []string, bgids []int64, stime, etime int64, severity int, recovered int, dsIds []int64, cates []string, query string, limit, offset int) ([]AlertHisEvent, error) {
+func AlertHisEventGets(ctx *ctx.Context, prods []string, bgids []int64, stime, etime int64,
+	severity int, recovered int, dsIds []int64, cates []string, ruleId int64, query string,
+	limit, offset int) ([]AlertHisEvent, error) {
 	session := DB(ctx).Where("last_eval_time between ? and ?", stime, etime)
 
 	if len(prods) != 0 {
@@ -177,6 +192,10 @@ func AlertHisEventGets(ctx *ctx.Context, prods []string, bgids []int64, stime, e
 
 	if len(cates) > 0 {
 		session = session.Where("cate in ?", cates)
+	}
+
+	if ruleId > 0 {
+		session = session.Where("rule_id = ?", ruleId)
 	}
 
 	if query != "" {
@@ -301,16 +320,19 @@ func EventPersist(ctx *ctx.Context, event *AlertCurEvent) error {
 			}
 		}
 
+		// use his id as cur id
+		event.Id = his.Id
 		return nil
 	}
+
+	// use his id as cur id
+	event.Id = his.Id
 
 	if event.IsRecovered {
 		// alert_cur_event表里没有数据，表示之前没告警，结果现在报了恢复，神奇....理论上不应该出现的
 		return nil
 	}
 
-	// use his id as cur id
-	event.Id = his.Id
 	if event.Id > 0 {
 		if err := event.Add(ctx); err != nil {
 			return fmt.Errorf("add cur event error:%v", err)

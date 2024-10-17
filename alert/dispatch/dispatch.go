@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"html/template"
+	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -31,6 +33,7 @@ type Dispatch struct {
 	alerting aconf.Alerting
 
 	Senders          map[string]sender.Sender
+	CallBacks        map[string]sender.CallBacker
 	tpls             map[string]*template.Template
 	ExtraSenders     map[string]sender.Sender
 	BeforeSenderHook func(*models.AlertCurEvent) bool
@@ -90,17 +93,28 @@ func (e *Dispatch) relaodTpls() error {
 	smtp := e.notifyConfigCache.GetSMTP()
 
 	senders := map[string]sender.Sender{
-		models.Email:       sender.NewSender(models.Email, tmpTpls, smtp),
-		models.Dingtalk:    sender.NewSender(models.Dingtalk, tmpTpls),
-		models.Wecom:       sender.NewSender(models.Wecom, tmpTpls),
-		models.Feishu:      sender.NewSender(models.Feishu, tmpTpls),
-		models.Mm:          sender.NewSender(models.Mm, tmpTpls),
-		models.Telegram:    sender.NewSender(models.Telegram, tmpTpls),
-		models.FeishuCard:  sender.NewSender(models.FeishuCard, tmpTpls),
-		models.WecomApp:    sender.NewSender(models.WecomApp, tmpTpls),
-		models.WecomDocker: sender.NewSender(models.WecomDocker, tmpTpls),
-		models.WecomVm:     sender.NewSender(models.WecomVm, tmpTpls),
-		models.WecomMid:    sender.NewSender(models.WecomMid, tmpTpls),
+		models.Email:      sender.NewSender(models.Email, tmpTpls, smtp),
+		models.Dingtalk:   sender.NewSender(models.Dingtalk, tmpTpls),
+		models.Wecom:      sender.NewSender(models.Wecom, tmpTpls),
+		models.Feishu:     sender.NewSender(models.Feishu, tmpTpls),
+		models.Mm:         sender.NewSender(models.Mm, tmpTpls),
+		models.Telegram:   sender.NewSender(models.Telegram, tmpTpls),
+		models.FeishuCard: sender.NewSender(models.FeishuCard, tmpTpls),
+		models.Lark:       sender.NewSender(models.Lark, tmpTpls),
+		models.LarkCard:   sender.NewSender(models.LarkCard, tmpTpls),
+	}
+
+	// domain -> Callback()
+	callbacks := map[string]sender.CallBacker{
+		models.DingtalkDomain:   sender.NewCallBacker(models.DingtalkDomain, e.targetCache, e.userCache, e.taskTplsCache, tmpTpls),
+		models.WecomDomain:      sender.NewCallBacker(models.WecomDomain, e.targetCache, e.userCache, e.taskTplsCache, tmpTpls),
+		models.FeishuDomain:     sender.NewCallBacker(models.FeishuDomain, e.targetCache, e.userCache, e.taskTplsCache, tmpTpls),
+		models.TelegramDomain:   sender.NewCallBacker(models.TelegramDomain, e.targetCache, e.userCache, e.taskTplsCache, tmpTpls),
+		models.FeishuCardDomain: sender.NewCallBacker(models.FeishuCardDomain, e.targetCache, e.userCache, e.taskTplsCache, tmpTpls),
+		models.IbexDomain:       sender.NewCallBacker(models.IbexDomain, e.targetCache, e.userCache, e.taskTplsCache, tmpTpls),
+		models.LarkDomain:       sender.NewCallBacker(models.LarkDomain, e.targetCache, e.userCache, e.taskTplsCache, tmpTpls),
+		models.DefaultDomain:    sender.NewCallBacker(models.DefaultDomain, e.targetCache, e.userCache, e.taskTplsCache, tmpTpls),
+		models.LarkCardDomain:   sender.NewCallBacker(models.LarkCardDomain, e.targetCache, e.userCache, e.taskTplsCache, tmpTpls),
 	}
 
 	e.RwLock.RLock()
@@ -112,6 +126,7 @@ func (e *Dispatch) relaodTpls() error {
 	e.RwLock.Lock()
 	e.tpls = tmpTpls
 	e.Senders = senders
+	e.CallBacks = callbacks
 	e.RwLock.Unlock()
 	return nil
 }
@@ -152,7 +167,7 @@ func (e *Dispatch) HandleEventNotify(event *models.AlertCurEvent, isSubscribe bo
 	}
 
 	// 处理事件发送,这里用一个goroutine处理一个event的所有发送事件
-	go e.Send(rule, event, notifyTarget)
+	go e.Send(rule, event, notifyTarget, isSubscribe)
 
 	// 如果是不是订阅规则出现的event, 则需要处理订阅规则的event
 	if !isSubscribe {
@@ -223,11 +238,12 @@ func (e *Dispatch) handleSub(sub *models.AlertSubscribe, event models.AlertCurEv
 	e.HandleEventNotify(&event, true)
 }
 
-func (e *Dispatch) Send(rule *models.AlertRule, event *models.AlertCurEvent, notifyTarget *NotifyTarget) {
+func (e *Dispatch) Send(rule *models.AlertRule, event *models.AlertCurEvent, notifyTarget *NotifyTarget, isSubscribe bool) {
 	needSend := e.BeforeSenderHook(event)
 	if needSend {
 		for channel, uids := range notifyTarget.ToChannelUserMap() {
-			msgCtx := sender.BuildMessageContext(rule, []*models.AlertCurEvent{event}, uids, e.userCache, e.Astats)
+			msgCtx := sender.BuildMessageContext(e.ctx, rule, []*models.AlertCurEvent{event},
+				uids, e.userCache, e.Astats)
 			e.RwLock.RLock()
 			s := e.Senders[channel]
 			e.RwLock.RUnlock()
@@ -247,13 +263,100 @@ func (e *Dispatch) Send(rule *models.AlertRule, event *models.AlertCurEvent, not
 	}
 	sender.SendCallbacks_cloud(e.ctx, notifyTarget.ToCallbackList(), event, e.targetCache, e.userCache, e.taskTplsCache, e.Astats)
 	// handle event callbacks
-	//sender.SendCallbacks(e.ctx, notifyTarget.ToCallbackList(), event, e.targetCache, e.userCache, e.taskTplsCache, e.Astats)
+	e.SendCallbacks(rule, notifyTarget, event)
 
 	// handle global webhooks
-	sender.SendWebhooks(notifyTarget.ToWebhookList(), event, e.Astats)
+	if e.alerting.WebhookBatchSend {
+		sender.BatchSendWebhooks(e.ctx, notifyTarget.ToWebhookList(), event, e.Astats)
+	} else {
+		sender.SingleSendWebhooks(e.ctx, notifyTarget.ToWebhookList(), event, e.Astats)
+	}
 
 	// handle plugin call
-	go sender.MayPluginNotify(e.genNoticeBytes(event), e.notifyConfigCache.GetNotifyScript(), e.Astats)
+	go sender.MayPluginNotify(e.ctx, e.genNoticeBytes(event), e.notifyConfigCache.
+		GetNotifyScript(), e.Astats, event)
+
+	if !isSubscribe {
+		// handle ibex callbacks
+		e.HandleIbex(rule, event)
+	}
+}
+
+func (e *Dispatch) SendCallbacks(rule *models.AlertRule, notifyTarget *NotifyTarget, event *models.AlertCurEvent) {
+
+	uids := notifyTarget.ToUidList()
+	urls := notifyTarget.ToCallbackList()
+	whMap := notifyTarget.ToWebhookMap()
+	for _, urlStr := range urls {
+		if len(urlStr) == 0 {
+			continue
+		}
+
+		cbCtx := sender.BuildCallBackContext(e.ctx, urlStr, rule, []*models.AlertCurEvent{event}, uids, e.userCache, e.alerting.WebhookBatchSend, e.Astats)
+
+		if wh, ok := whMap[cbCtx.CallBackURL]; ok && wh.Enable {
+			logger.Debugf("SendCallbacks: webhook[%s] is in global conf.", cbCtx.CallBackURL)
+			continue
+		}
+
+		if strings.HasPrefix(urlStr, "${ibex}") {
+			e.CallBacks[models.IbexDomain].CallBack(cbCtx)
+			continue
+		}
+
+		if !(strings.HasPrefix(urlStr, "http://") || strings.HasPrefix(urlStr, "https://")) {
+			cbCtx.CallBackURL = "http://" + urlStr
+		}
+
+		parsedURL, err := url.Parse(urlStr)
+		if err != nil {
+			logger.Errorf("SendCallbacks: failed to url.Parse(urlStr=%s): %v", urlStr, err)
+			continue
+		}
+
+		// process feishu card
+		if parsedURL.Host == models.FeishuDomain && parsedURL.Query().Get("card") == "1" {
+			e.CallBacks[models.FeishuCardDomain].CallBack(cbCtx)
+			continue
+		}
+
+		// process lark card
+		if parsedURL.Host == models.LarkDomain && parsedURL.Query().Get("card") == "1" {
+			e.CallBacks[models.LarkCardDomain].CallBack(cbCtx)
+			continue
+		}
+
+		callBacker, ok := e.CallBacks[parsedURL.Host]
+		if ok {
+			callBacker.CallBack(cbCtx)
+		} else {
+			e.CallBacks[models.DefaultDomain].CallBack(cbCtx)
+		}
+	}
+}
+
+func (e *Dispatch) HandleIbex(rule *models.AlertRule, event *models.AlertCurEvent) {
+	// 解析 RuleConfig 字段
+	var ruleConfig struct {
+		TaskTpls []*models.Tpl `json:"task_tpls"`
+	}
+	json.Unmarshal([]byte(rule.RuleConfig), &ruleConfig)
+
+	for _, t := range ruleConfig.TaskTpls {
+		if t.TplId == 0 {
+			continue
+		}
+
+		if len(t.Host) == 0 {
+			sender.CallIbex(e.ctx, t.TplId, event.TargetIdent,
+				e.taskTplsCache, e.targetCache, e.userCache, event)
+			continue
+		}
+		for _, host := range t.Host {
+			sender.CallIbex(e.ctx, t.TplId, host,
+				e.taskTplsCache, e.targetCache, e.userCache, event)
+		}
+	}
 }
 
 type Notice struct {
