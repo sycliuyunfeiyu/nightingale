@@ -117,3 +117,112 @@ CREATE TABLE `target_busi_group` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `idx_target_group` (`target_ident`,`group_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+/* v7.7.0 2024-11-13 */
+ALTER TABLE `recording_rule` ADD COLUMN `datasource_queries` TEXT;
+ALTER TABLE `alert_rule` ADD COLUMN `datasource_queries` TEXT;
+
+/* v7.7.2 2024-12-02 */
+ALTER TABLE alert_subscribe MODIFY COLUMN rule_ids varchar(1024);
+ALTER TABLE alert_subscribe MODIFY COLUMN busi_groups varchar(4096);
+
+/* v8.0.0-beta.1 2024-12-13 */
+ALTER TABLE `alert_rule` ADD COLUMN `cron_pattern` VARCHAR(64);
+ALTER TABLE `builtin_components` MODIFY COLUMN `logo` mediumtext COMMENT '''logo of component''';
+
+/* v8.0.0-beta.2 2024-12-26 */
+ALTER TABLE `es_index_pattern` ADD COLUMN `cross_cluster_enabled` int not null default 0;
+
+/* v8.0.0-beta.3 2025-01-03 */
+ALTER TABLE `builtin_components` ADD COLUMN `disabled` INT NOT NULL DEFAULT 0 COMMENT 'is disabled or not';
+        
+CREATE TABLE `dash_annotation` (
+    `id` bigint unsigned not null auto_increment,
+    `dashboard_id` bigint not null comment 'dashboard id',
+    `panel_id` varchar(191) not null comment 'panel id',
+    `tags` text comment 'tags array json string',
+    `description` text comment 'annotation description',
+    `config` text comment 'annotation config',
+    `time_start` bigint not null default 0 comment 'start timestamp',
+    `time_end` bigint not null default 0 comment 'end timestamp',
+    `create_at` bigint not null default 0 comment 'create time',
+    `create_by` varchar(64) not null default '' comment 'creator',
+    `update_at` bigint not null default 0 comment 'update time',
+    `update_by` varchar(64) not null default '' comment 'updater',
+    PRIMARY KEY (`id`),
+    KEY `idx_dashboard_id` (`dashboard_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+/* v8.0.0-beta.5 2025-02-05 */
+CREATE TABLE `user_token` (
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `username` varchar(255) NOT NULL DEFAULT '',
+    `token_name` varchar(255) NOT NULL DEFAULT '',
+    `token` varchar(255) NOT NULL DEFAULT '',
+    `create_at` bigint NOT NULL DEFAULT 0,
+    `last_used` bigint NOT NULL DEFAULT 0,
+    PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+/* v8.0.0-beta.7 2025-03-01 */
+CREATE TABLE `notify_rule` (
+    `id` bigint unsigned not null auto_increment,
+    `name` varchar(255) not null,
+    `description` text,
+    `enable` tinyint(1) not null default 0,
+    `user_group_ids` varchar(255) not null default '',
+    `notify_configs` text,
+    `create_at` bigint not null default 0,
+    `create_by` varchar(64) not null default '',
+    `update_at` bigint not null default 0,
+    `update_by` varchar(64) not null default '',
+    PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;
+
+CREATE TABLE `notify_channel` (
+    `id` bigint unsigned not null auto_increment,
+    `name` varchar(255) not null,
+    `ident` varchar(255) not null,
+    `description` text, 
+    `enable` tinyint(1) not null default 0,
+    `param_config` text,
+    `request_type` varchar(50) not null,
+    `request_config` text,
+    `create_at` bigint not null default 0,
+    `create_by` varchar(64) not null default '',
+    `update_at` bigint not null default 0,
+    `update_by` varchar(64) not null default '',
+    PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;
+
+CREATE TABLE `message_template` (
+    `id` bigint unsigned not null auto_increment,
+    `name` varchar(64) not null,
+    `ident` varchar(64) not null,
+    `content` text,
+    `user_group_ids` varchar(64),
+    `notify_channel_ident` varchar(64) not null default '',
+    `private` int not null default 0,
+    `create_at` bigint not null default 0,
+    `create_by` varchar(64) not null default '',
+    `update_at` bigint not null default 0,
+    `update_by` varchar(64) not null default '',
+    PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;
+
+ALTER TABLE `alert_rule` ADD COLUMN `notify_rule_ids` varchar(1024) DEFAULT '';
+ALTER TABLE `alert_rule` ADD COLUMN `notify_version` int DEFAULT 0;
+
+ALTER TABLE `alert_subscribe` ADD COLUMN `notify_rule_ids` varchar(1024) DEFAULT '';
+ALTER TABLE `alert_subscribe` ADD COLUMN `notify_version` int DEFAULT 0;
+
+ALTER TABLE `notification_record` ADD COLUMN `notify_rule_id` BIGINT NOT NULL DEFAULT 0;
+
+
+/* v8.0.0-beta.9 2025-03-17 */
+ALTER TABLE `message_template` ADD COLUMN `weight` int not null default 0;
+ALTER TABLE `notify_channel` ADD COLUMN `weight` int not null default 0;
+
+/* v8.0.0-beta.11 2025-04-10 */
+ALTER TABLE `es_index_pattern` ADD COLUMN `note` varchar(1024) not null default '';
+ALTER TABLE `datasource` ADD COLUMN `identifier` varchar(255) not null default '';

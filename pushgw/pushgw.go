@@ -6,6 +6,7 @@ import (
 
 	"github.com/ccfos/nightingale/v6/center/metas"
 	"github.com/ccfos/nightingale/v6/conf"
+	"github.com/ccfos/nightingale/v6/dscache"
 	"github.com/ccfos/nightingale/v6/memsto"
 	"github.com/ccfos/nightingale/v6/pkg/ctx"
 	"github.com/ccfos/nightingale/v6/pkg/httpx"
@@ -48,13 +49,14 @@ func Initialize(configDir string, cryptoKey string) (func(), error) {
 
 	busiGroupCache := memsto.NewBusiGroupCache(ctx, stats)
 	targetCache := memsto.NewTargetCache(ctx, stats, nil)
+	configCvalCache := memsto.NewCvalCache(ctx, stats)
 
 	writers := writer.NewWriters(config.Pushgw)
 
-	r := httpx.GinEngine(config.Global.RunMode, config.HTTP)
+	r := httpx.GinEngine(config.Global.RunMode, config.HTTP, configCvalCache.PrintBodyPaths, configCvalCache.PrintAccessLog)
 	rt := router.New(config.HTTP, config.Pushgw, config.Alert, targetCache, busiGroupCache, idents, metas, writers, ctx)
 	rt.Config(r)
-
+	dscache.Init(ctx, false)
 	httpClean := httpx.Init(config.HTTP, r)
 
 	return func() {

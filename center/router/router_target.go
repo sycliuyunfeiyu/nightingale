@@ -9,13 +9,14 @@ import (
 	"time"
 
 	"github.com/ccfos/nightingale/v6/models"
+	"github.com/ccfos/nightingale/v6/pkg/ctx"
+	"github.com/ccfos/nightingale/v6/pkg/strx"
 	"github.com/ccfos/nightingale/v6/storage"
 
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/common/model"
 	"github.com/toolkits/pkg/ginx"
 	"github.com/toolkits/pkg/logger"
-	"github.com/toolkits/pkg/str"
 )
 
 type TargetQuery struct {
@@ -43,7 +44,7 @@ func (rt *Router) targetGetsByHostFilter(c *gin.Context) {
 }
 
 func (rt *Router) targetGets(c *gin.Context) {
-	bgids := str.IdsInt64(ginx.QueryStr(c, "gids", ""), ",")
+	bgids := strx.IdsInt64ForAPI(ginx.QueryStr(c, "gids", ""), ",")
 	query := ginx.QueryStr(c, "query", "")
 	limit := ginx.QueryInt(c, "limit", 30)
 	downtime := ginx.QueryInt64(c, "downtime", 0)
@@ -55,7 +56,11 @@ func (rt *Router) targetGets(c *gin.Context) {
 	hosts := queryStrListField(c, "hosts", ",", " ", "\n")
 
 	var err error
-	if len(bgids) == 0 {
+	if len(bgids) > 0 {
+		for _, gid := range bgids {
+			rt.bgroCheck(c, gid)
+		}
+	} else {
 		user := c.MustGet("user").(*models.User)
 		if !user.IsAdmin() {
 			// 如果是非 admin 用户，全部对象的情况，找到用户有权限的业务组
@@ -169,7 +174,7 @@ func (rt *Router) targetGetTags(c *gin.Context) {
 	idents := ginx.QueryStr(c, "idents", "")
 	idents = strings.ReplaceAll(idents, ",", " ")
 	ignoreHostTag := ginx.QueryBool(c, "ignore_host_tag", false)
-	lst, err := models.TargetGetTags(rt.Ctx, strings.Fields(idents), ignoreHostTag)
+	lst, err := models.TargetGetTags(rt.Ctx, strings.Fields(idents), ignoreHostTag, "")
 	ginx.NewRender(c).Data(lst, err)
 }
 
@@ -272,11 +277,9 @@ func (rt *Router) validateTags(tags []string) error {
 }
 
 func (rt *Router) addTagsToTarget(target *models.Target, tags []string) error {
-	hostTagsMap := target.GetHostTagsMap()
 	for _, tag := range tags {
 		tagKey := strings.Split(tag, "=")[0]
-		if _, ok := hostTagsMap[tagKey]; ok ||
-			strings.Contains(target.Tags, tagKey+"=") {
+		if _, exist := target.TagsMap[tagKey]; exist {
 			return fmt.Errorf("duplicate tagkey(%s)", tagKey)
 		}
 	}
@@ -397,7 +400,23 @@ type targetBgidsForm struct {
 	Idents  []string `json:"idents" binding:"required_without=HostIps"`
 	HostIps []string `json:"host_ips" binding:"required_without=Idents"`
 	Bgids   []int64  `json:"bgids"`
+	Tags    []string `json:"tags"`
 	Action  string   `json:"action"` // add del reset
+}
+
+func haveNeverGroupedIdent(ctx *ctx.Context, idents []string) (bool, error) {
+	for _, ident := range idents {
+		bgids, err := models.TargetGroupIdsGetByIdent(ctx, ident)
+		if err != nil {
+			return false, err
+		}
+
+		if len(bgids) <= 0 {
+			return true, nil
+		}
+	}
+
+	return false, nil
 }
 
 func (rt *Router) targetBindBgids(c *gin.Context) {
@@ -442,21 +461,25 @@ func (rt *Router) targetBindBgids(c *gin.Context) {
 				ginx.Bomb(http.StatusForbidden, "No permission. You are not admin of BG(%s)", bg.Name)
 			}
 		}
+		isNeverGrouped, checkErr := haveNeverGroupedIdent(rt.Ctx, f.Idents)
+		ginx.Dangerous(checkErr)
 
-		can, err := user.CheckPerm(rt.Ctx, "/targets/bind")
-		ginx.Dangerous(err)
-		if !can {
-			ginx.Bomb(http.StatusForbidden, "No permission. Only admin can assign BG")
+		if isNeverGrouped {
+			can, err := user.CheckPerm(rt.Ctx, "/targets/bind")
+			ginx.Dangerous(err)
+			if !can {
+				ginx.Bomb(http.StatusForbidden, "No permission. Only admin can assign BG")
+			}
 		}
 	}
 
 	switch f.Action {
 	case "add":
-		ginx.NewRender(c).Data(failedResults, models.TargetBindBgids(rt.Ctx, f.Idents, f.Bgids))
+		ginx.NewRender(c).Data(failedResults, models.TargetBindBgids(rt.Ctx, f.Idents, f.Bgids, f.Tags))
 	case "del":
 		ginx.NewRender(c).Data(failedResults, models.TargetUnbindBgids(rt.Ctx, f.Idents, f.Bgids))
 	case "reset":
-		ginx.NewRender(c).Data(failedResults, models.TargetOverrideBgids(rt.Ctx, f.Idents, f.Bgids))
+		ginx.NewRender(c).Data(failedResults, models.TargetOverrideBgids(rt.Ctx, f.Idents, f.Bgids, f.Tags))
 	default:
 		ginx.Bomb(http.StatusBadRequest, "invalid action")
 	}
@@ -478,7 +501,7 @@ func (rt *Router) targetUpdateBgidByService(c *gin.Context) {
 		ginx.Bomb(http.StatusBadRequest, err.Error())
 	}
 
-	ginx.NewRender(c).Data(failedResults, models.TargetOverrideBgids(rt.Ctx, f.Idents, []int64{f.Bgid}))
+	ginx.NewRender(c).Data(failedResults, models.TargetOverrideBgids(rt.Ctx, f.Idents, []int64{f.Bgid}, nil))
 }
 
 type identsForm struct {
@@ -550,4 +573,28 @@ func (rt *Router) targetsOfAlertRule(c *gin.Context) {
 	}
 
 	ginx.NewRender(c).Data(ret, err)
+}
+
+func (rt *Router) checkTargetsExistByIndent(idents []string) {
+	existingIdents, err := models.TargetNoExistIdents(rt.Ctx, idents)
+	ginx.Dangerous(err)
+
+	if len(existingIdents) > 0 {
+		ginx.Bomb(http.StatusBadRequest, "targets not exist: %s", strings.Join(existingIdents, ","))
+	}
+}
+
+func (rt *Router) targetsOfHostQuery(c *gin.Context) {
+	var queries []models.HostQuery
+	ginx.BindJSON(c, &queries)
+
+	hostsQuery := models.GetHostsQuery(queries)
+	session := models.TargetFilterQueryBuild(rt.Ctx, hostsQuery, 0, 0)
+	var lst []*models.Target
+	err := session.Find(&lst).Error
+	if err != nil {
+		ginx.Bomb(http.StatusInternalServerError, err.Error())
+	}
+
+	ginx.NewRender(c).Data(lst, nil)
 }

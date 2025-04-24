@@ -24,7 +24,7 @@ import (
 	"github.com/ccfos/nightingale/v6/prom"
 	"github.com/ccfos/nightingale/v6/pushgw/idents"
 	"github.com/ccfos/nightingale/v6/storage"
-	"github.com/ccfos/nightingale/v6/tdengine"
+	"gorm.io/gorm"
 
 	"github.com/gin-gonic/gin"
 	"github.com/rakyll/statik/fs"
@@ -42,7 +42,6 @@ type Router struct {
 	DatasourceCache   *memsto.DatasourceCacheType
 	NotifyConfigCache *memsto.NotifyConfigCacheType
 	PromClients       *prom.PromClientMap
-	TdendgineClients  *tdengine.TdengineClientMap
 	Redis             storage.Redis
 	MetaSet           *metas.Set
 	IdentSet          *idents.Set
@@ -50,41 +49,41 @@ type Router struct {
 	Sso               *sso.SsoClient
 	UserCache         *memsto.UserCacheType
 	UserGroupCache    *memsto.UserGroupCacheType
+	UserTokenCache    *memsto.UserTokenCacheType
 	Ctx               *ctx.Context
-	HeartbeatHook     HeartbeatHookFunc
-	TargetDeleteHook  models.TargetDeleteHookFunc
+
+	HeartbeatHook       HeartbeatHookFunc
+	TargetDeleteHook    models.TargetDeleteHookFunc
+	AlertRuleModifyHook AlertRuleModifyHookFunc
 }
 
 func New(httpConfig httpx.Config, center cconf.Center, alert aconf.Alert, ibex conf.Ibex,
 	operations cconf.Operation, ds *memsto.DatasourceCacheType, ncc *memsto.NotifyConfigCacheType,
-	pc *prom.PromClientMap, tdendgineClients *tdengine.TdengineClientMap, redis storage.Redis,
+	pc *prom.PromClientMap, redis storage.Redis,
 	sso *sso.SsoClient, ctx *ctx.Context, metaSet *metas.Set, idents *idents.Set,
-	tc *memsto.TargetCacheType, uc *memsto.UserCacheType, ugc *memsto.UserGroupCacheType) *Router {
+	tc *memsto.TargetCacheType, uc *memsto.UserCacheType, ugc *memsto.UserGroupCacheType, utc *memsto.UserTokenCacheType) *Router {
 	return &Router{
-		HTTP:              httpConfig,
-		Center:            center,
-		Alert:             alert,
-		Ibex:              ibex,
-		Operations:        operations,
-		DatasourceCache:   ds,
-		NotifyConfigCache: ncc,
-		PromClients:       pc,
-		TdendgineClients:  tdendgineClients,
-		Redis:             redis,
-		MetaSet:           metaSet,
-		IdentSet:          idents,
-		TargetCache:       tc,
-		Sso:               sso,
-		UserCache:         uc,
-		UserGroupCache:    ugc,
-		Ctx:               ctx,
-		HeartbeatHook:     func(ident string) map[string]interface{} { return nil },
-		TargetDeleteHook:  emptyDeleteHook,
+		HTTP:                httpConfig,
+		Center:              center,
+		Alert:               alert,
+		Ibex:                ibex,
+		Operations:          operations,
+		DatasourceCache:     ds,
+		NotifyConfigCache:   ncc,
+		PromClients:         pc,
+		Redis:               redis,
+		MetaSet:             metaSet,
+		IdentSet:            idents,
+		TargetCache:         tc,
+		Sso:                 sso,
+		UserCache:           uc,
+		UserGroupCache:      ugc,
+		UserTokenCache:      utc,
+		Ctx:                 ctx,
+		HeartbeatHook:       func(ident string) map[string]interface{} { return nil },
+		TargetDeleteHook:    func(tx *gorm.DB, idents []string) error { return nil },
+		AlertRuleModifyHook: func(ar *models.AlertRule) {},
 	}
-}
-
-func emptyDeleteHook(ctx *ctx.Context, idents []string) error {
-	return nil
 }
 
 func stat() gin.HandlerFunc {
@@ -184,26 +183,53 @@ func (rt *Router) Config(r *gin.Engine) {
 			pages.POST("/query-range-batch", rt.promBatchQueryRange)
 			pages.POST("/query-instant-batch", rt.promBatchQueryInstant)
 			pages.GET("/datasource/brief", rt.datasourceBriefs)
+			pages.POST("/datasource/query", rt.datasourceQuery)
 
 			pages.POST("/ds-query", rt.QueryData)
-			pages.POST("/logs-query", rt.QueryLog)
+			pages.POST("/logs-query", rt.QueryLogV2)
 
 			pages.POST("/tdengine-databases", rt.tdengineDatabases)
 			pages.POST("/tdengine-tables", rt.tdengineTables)
 			pages.POST("/tdengine-columns", rt.tdengineColumns)
 
+			pages.POST("/log-query-batch", rt.QueryLogBatch)
+
+			// 数据库元数据接口
+			pages.POST("/db-databases", rt.ShowDatabases)
+			pages.POST("/db-tables", rt.ShowTables)
+			pages.POST("/db-desc-table", rt.DescribeTable)
+
+			// es 专用接口
+			pages.POST("/indices", rt.auth(), rt.user(), rt.QueryIndices)
+			pages.POST("/es-variable", rt.auth(), rt.user(), rt.QueryESVariable)
+			pages.POST("/fields", rt.auth(), rt.user(), rt.QueryFields)
+			pages.POST("/log-query", rt.auth(), rt.user(), rt.QueryLog)
 		} else {
 			pages.Any("/proxy/:id/*url", rt.auth(), rt.dsProxy)
 			pages.POST("/query-range-batch", rt.auth(), rt.promBatchQueryRange)
 			pages.POST("/query-instant-batch", rt.auth(), rt.promBatchQueryInstant)
 			pages.GET("/datasource/brief", rt.auth(), rt.user(), rt.datasourceBriefs)
+			pages.POST("/datasource/query", rt.auth(), rt.user(), rt.datasourceQuery)
 
 			pages.POST("/ds-query", rt.auth(), rt.QueryData)
-			pages.POST("/logs-query", rt.auth(), rt.QueryLog)
+			pages.POST("/logs-query", rt.auth(), rt.QueryLogV2)
 
 			pages.POST("/tdengine-databases", rt.auth(), rt.tdengineDatabases)
 			pages.POST("/tdengine-tables", rt.auth(), rt.tdengineTables)
 			pages.POST("/tdengine-columns", rt.auth(), rt.tdengineColumns)
+
+			pages.POST("/log-query-batch", rt.auth(), rt.user(), rt.QueryLogBatch)
+
+			// 数据库元数据接口
+			pages.POST("/db-databases", rt.auth(), rt.user(), rt.ShowDatabases)
+			pages.POST("/db-tables", rt.auth(), rt.user(), rt.ShowTables)
+			pages.POST("/db-desc-table", rt.auth(), rt.user(), rt.DescribeTable)
+
+			// es 专用接口
+			pages.POST("/indices", rt.auth(), rt.user(), rt.QueryIndices)
+			pages.POST("/es-variable", rt.QueryESVariable)
+			pages.POST("/fields", rt.QueryFields)
+			pages.POST("/log-query", rt.QueryLog)
 		}
 
 		pages.GET("/sql-template", rt.QuerySqlTemplate)
@@ -234,6 +260,9 @@ func (rt *Router) Config(r *gin.Engine) {
 		pages.GET("/self/profile", rt.auth(), rt.user(), rt.selfProfileGet)
 		pages.PUT("/self/profile", rt.auth(), rt.user(), rt.selfProfilePut)
 		pages.PUT("/self/password", rt.auth(), rt.user(), rt.selfPasswordPut)
+		pages.GET("/self/token", rt.auth(), rt.user(), rt.getToken)
+		pages.POST("/self/token", rt.auth(), rt.user(), rt.addToken)
+		pages.DELETE("/self/token/:id", rt.auth(), rt.user(), rt.deleteToken)
 
 		pages.GET("/users", rt.auth(), rt.user(), rt.perm("/users"), rt.userGets)
 		pages.POST("/users", rt.auth(), rt.admin(), rt.userAddPost)
@@ -278,6 +307,7 @@ func (rt *Router) Config(r *gin.Engine) {
 		pages.DELETE("/busi-group/:id/members", rt.auth(), rt.user(), rt.perm("/busi-groups/put"), rt.bgrw(), rt.busiGroupMemberDel)
 		pages.DELETE("/busi-group/:id", rt.auth(), rt.user(), rt.perm("/busi-groups/del"), rt.bgrw(), rt.busiGroupDel)
 		pages.GET("/busi-group/:id/perm/:perm", rt.auth(), rt.user(), rt.checkBusiGroupPerm)
+		pages.GET("/busi-groups/tags", rt.auth(), rt.user(), rt.busiGroupsGetTags)
 
 		pages.GET("/targets", rt.auth(), rt.user(), rt.targetGets)
 		pages.GET("/target/extra-meta", rt.auth(), rt.user(), rt.targetExtendInfoByIdent)
@@ -319,6 +349,11 @@ func (rt *Router) Config(r *gin.Engine) {
 		pages.GET("/share-charts", rt.chartShareGets)
 		pages.POST("/share-charts", rt.auth(), rt.chartShareAdd)
 
+		pages.POST("/dashboard-annotations", rt.auth(), rt.user(), rt.perm("/dashboards/put"), rt.dashAnnotationAdd)
+		pages.GET("/dashboard-annotations", rt.dashAnnotationGets)
+		pages.PUT("/dashboard-annotation/:id", rt.auth(), rt.user(), rt.perm("/dashboards/put"), rt.dashAnnotationPut)
+		pages.DELETE("/dashboard-annotation/:id", rt.auth(), rt.user(), rt.perm("/dashboards/del"), rt.dashAnnotationDel)
+
 		// pages.GET("/alert-rules/builtin/alerts-cates", rt.auth(), rt.user(), rt.builtinAlertCateGets)
 		// pages.GET("/alert-rules/builtin/list", rt.auth(), rt.user(), rt.builtinAlertRules)
 		pages.GET("/alert-rules/callbacks", rt.auth(), rt.user(), rt.alertRuleCallbacks)
@@ -337,6 +372,7 @@ func (rt *Router) Config(r *gin.Engine) {
 		pages.PUT("/busi-group/alert-rule/validate", rt.auth(), rt.user(), rt.perm("/alert-rules/put"), rt.alertRuleValidation)
 		pages.POST("/relabel-test", rt.auth(), rt.user(), rt.relabelTest)
 		pages.POST("/busi-group/:id/alert-rules/clone", rt.auth(), rt.user(), rt.perm("/alert-rules/add"), rt.bgrw(), rt.cloneToMachine)
+		pages.POST("/busi-groups/alert-rules/clones", rt.auth(), rt.user(), rt.perm("/alert-rules/add"), rt.batchAlertRuleClone)
 
 		pages.GET("/busi-groups/recording-rules", rt.auth(), rt.user(), rt.perm("/recording-rules"), rt.recordingRuleGetsByGids)
 		pages.GET("/busi-group/:id/recording-rules", rt.auth(), rt.user(), rt.perm("/recording-rules"), rt.recordingRuleGets)
@@ -476,6 +512,31 @@ func (rt *Router) Config(r *gin.Engine) {
 		pages.PUT("/builtin-payloads", rt.auth(), rt.user(), rt.perm("/built-in-components/put"), rt.builtinPayloadsPut)
 		pages.DELETE("/builtin-payloads", rt.auth(), rt.user(), rt.perm("/built-in-components/del"), rt.builtinPayloadsDel)
 		pages.GET("/builtin-payload", rt.auth(), rt.user(), rt.builtinPayloadsGetByUUIDOrID)
+
+		pages.POST("/message-templates", rt.auth(), rt.user(), rt.perm("/notification-templates/add"), rt.messageTemplatesAdd)
+		pages.DELETE("/message-templates", rt.auth(), rt.user(), rt.perm("/notification-templates/del"), rt.messageTemplatesDel)
+		pages.PUT("/message-template/:id", rt.auth(), rt.user(), rt.perm("/notification-templates/put"), rt.messageTemplatePut)
+		pages.GET("/message-template/:id", rt.auth(), rt.user(), rt.perm("/notification-templates"), rt.messageTemplateGet)
+		pages.GET("/message-templates", rt.auth(), rt.user(), rt.messageTemplatesGet)
+		pages.POST("/events-message", rt.auth(), rt.user(), rt.eventsMessage)
+
+		pages.POST("/notify-rules", rt.auth(), rt.user(), rt.perm("/notification-rules/add"), rt.notifyRulesAdd)
+		pages.DELETE("/notify-rules", rt.auth(), rt.user(), rt.perm("/notification-rules/del"), rt.notifyRulesDel)
+		pages.PUT("/notify-rule/:id", rt.auth(), rt.user(), rt.perm("/notification-rules/put"), rt.notifyRulePut)
+		pages.GET("/notify-rule/:id", rt.auth(), rt.user(), rt.perm("/notification-rules"), rt.notifyRuleGet)
+		pages.GET("/notify-rules", rt.auth(), rt.user(), rt.perm("/notification-rules"), rt.notifyRulesGet)
+		pages.POST("/notify-rule/test", rt.auth(), rt.user(), rt.perm("/notification-rules"), rt.notifyTest)
+		pages.GET("/notify-rule/custom-params", rt.auth(), rt.user(), rt.perm("/notification-rules"), rt.notifyRuleCustomParamsGet)
+
+		pages.POST("/notify-channel-configs", rt.auth(), rt.user(), rt.perm("/notification-channels/add"), rt.notifyChannelsAdd)
+		pages.DELETE("/notify-channel-configs", rt.auth(), rt.user(), rt.perm("/notification-channels/del"), rt.notifyChannelsDel)
+		pages.PUT("/notify-channel-config/:id", rt.auth(), rt.user(), rt.perm("/notification-channels/put"), rt.notifyChannelPut)
+		pages.GET("/notify-channel-config/:id", rt.auth(), rt.user(), rt.perm("/notification-channels"), rt.notifyChannelGet)
+		pages.GET("/notify-channel-configs", rt.auth(), rt.user(), rt.perm("/notification-channels"), rt.notifyChannelsGet)
+		pages.GET("/simplified-notify-channel-configs", rt.notifyChannelsGetForNormalUser)
+		pages.GET("/flashduty-channel-list/:id", rt.auth(), rt.user(), rt.flashDutyNotifyChannelsGet)
+		pages.GET("/notify-channel-config", rt.auth(), rt.user(), rt.notifyChannelGetBy)
+		pages.GET("/notify-channel-config/idents", rt.notifyChannelIdentsGet)
 	}
 
 	r.GET("/api/n9e/versions", func(c *gin.Context) {
@@ -518,6 +579,8 @@ func (rt *Router) Config(r *gin.Engine) {
 			service.PUT("/targets/note", rt.targetUpdateNoteByService)
 			service.PUT("/targets/bgid", rt.targetUpdateBgidByService)
 
+			service.POST("/targets-of-host-query", rt.targetsOfHostQuery)
+
 			service.POST("/alert-rules", rt.alertRuleAddByService)
 			service.POST("/alert-rule-add", rt.alertRuleAddOneByService)
 			service.DELETE("/alert-rules", rt.alertRuleDelByService)
@@ -552,6 +615,7 @@ func (rt *Router) Config(r *gin.Engine) {
 			service.GET("/config/:id", rt.configGet)
 			service.GET("/configs", rt.configsGet)
 			service.GET("/config", rt.configGetByKey)
+			service.GET("/all-configs", rt.configGetAll)
 			service.PUT("/configs", rt.configsPut)
 			service.POST("/configs", rt.configsPost)
 			service.DELETE("/configs", rt.configsDel)
@@ -574,6 +638,15 @@ func (rt *Router) Config(r *gin.Engine) {
 			service.GET("/alert-cur-events-del-by-hash", rt.alertCurEventDelByHash)
 
 			service.POST("/center/heartbeat", rt.heartbeat)
+
+			service.GET("/es-index-pattern-list", rt.esIndexPatternGetList)
+
+			service.GET("/notify-rules", rt.notifyRulesGetByService)
+
+			service.GET("/notify-channels", rt.notifyChannelConfigGets)
+
+			service.GET("/message-templates", rt.messageTemplateGets)
+
 		}
 	}
 

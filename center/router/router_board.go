@@ -6,11 +6,11 @@ import (
 	"time"
 
 	"github.com/ccfos/nightingale/v6/models"
+	"github.com/ccfos/nightingale/v6/pkg/strx"
 
 	"github.com/gin-gonic/gin"
 	"github.com/toolkits/pkg/ginx"
 	"github.com/toolkits/pkg/i18n"
-	"github.com/toolkits/pkg/str"
 )
 
 type boardForm struct {
@@ -51,8 +51,13 @@ func (rt *Router) boardAdd(c *gin.Context) {
 
 func (rt *Router) boardGet(c *gin.Context) {
 	bid := ginx.UrlParamStr(c, "bid")
-	board, err := models.BoardGet(rt.Ctx, "id = ? or ident = ?", bid, bid)
+	board, err := models.BoardGet(rt.Ctx, "ident = ?", bid)
 	ginx.Dangerous(err)
+
+	if board == nil {
+		board, err = models.BoardGet(rt.Ctx, "id = ?", bid)
+		ginx.Dangerous(err)
+	}
 
 	if board == nil {
 		ginx.Bomb(http.StatusNotFound, "No such dashboard")
@@ -96,7 +101,7 @@ func (rt *Router) boardGet(c *gin.Context) {
 
 // 根据 bids 参数，获取多个 board
 func (rt *Router) boardGetsByBids(c *gin.Context) {
-	bids := str.IdsInt64(ginx.QueryStr(c, "bids", ""), ",")
+	bids := strx.IdsInt64ForAPI(ginx.QueryStr(c, "bids", ""), ",")
 	boards, err := models.BoardGetsByBids(rt.Ctx, bids)
 	ginx.Dangerous(err)
 	ginx.NewRender(c).Data(boards, err)
@@ -265,7 +270,7 @@ func (rt *Router) publicBoardGets(c *gin.Context) {
 }
 
 func (rt *Router) boardGetsByGids(c *gin.Context) {
-	gids := str.IdsInt64(ginx.QueryStr(c, "gids", ""), ",")
+	gids := strx.IdsInt64ForAPI(ginx.QueryStr(c, "gids", ""), ",")
 	query := ginx.QueryStr(c, "query", "")
 
 	if len(gids) > 0 {

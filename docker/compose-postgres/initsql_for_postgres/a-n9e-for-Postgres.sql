@@ -790,6 +790,7 @@ CREATE TABLE es_index_pattern (
     time_field varchar(128) not null default '@timestamp',
     allow_hide_system_indices smallint not null default 0,
     fields_format varchar(4096) not null default '',
+    cross_cluster_enabled int not null default 0,
     create_at bigint default '0',
     create_by varchar(64) default '',
     update_at bigint default '0',
@@ -859,6 +860,7 @@ CREATE TABLE builtin_components (
   ident VARCHAR(191) NOT NULL,
   logo VARCHAR(191) NOT NULL,
   readme TEXT NOT NULL,
+  disabled INT NOT NULL DEFAULT 0,
   created_at BIGINT NOT NULL DEFAULT 0,
   created_by VARCHAR(191) NOT NULL DEFAULT '',
   updated_at BIGINT NOT NULL DEFAULT 0,
@@ -886,3 +888,19 @@ CREATE INDEX idx_component ON builtin_payloads (component);
 CREATE INDEX idx_builtin_payloads_name ON builtin_payloads (name);
 CREATE INDEX idx_cate ON builtin_payloads (cate);
 CREATE INDEX idx_type ON builtin_payloads (type);
+
+
+CREATE TABLE dash_annotation (
+    id bigserial PRIMARY KEY,
+    dashboard_id bigint not null,
+    panel_id varchar(191) not null,
+    tags text,
+    description text,
+    config text,
+    time_start bigint not null default 0,
+    time_end bigint not null default 0,
+    create_at bigint not null default 0,
+    create_by varchar(64) not null default '',
+    update_at bigint not null default 0,
+    update_by varchar(64) not null default ''
+);

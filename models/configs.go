@@ -106,10 +106,8 @@ func InitRSAPassWord(ctx *ctx.Context) (string, error) {
 
 func ConfigsGet(ctx *ctx.Context, ckey string) (string, error) { //select built-in type configs
 	if !ctx.IsCenter {
-		if !ctx.IsCenter {
-			s, err := poster.GetByUrls[string](ctx, "/v1/n9e/config?key="+ckey)
-			return s, err
-		}
+		s, err := poster.GetByUrls[string](ctx, "/v1/n9e/config?key="+ckey)
+		return s, err
 	}
 
 	var lst []string
@@ -123,6 +121,22 @@ func ConfigsGet(ctx *ctx.Context, ckey string) (string, error) { //select built-
 	}
 
 	return "", nil
+}
+
+func ConfigsGetAll(ctx *ctx.Context) ([]*Configs, error) { // select built-in type configs
+	if !ctx.IsCenter {
+		lst, err := poster.GetByUrls[[]*Configs](ctx, "/v1/n9e/all-configs")
+		return lst, err
+	}
+
+	var lst []*Configs
+	err := DB(ctx).Model(&Configs{}).Select("id, ckey, cval").
+		Where("ckey!='' and external=? ", 0).Find(&lst).Error
+	if err != nil {
+		return nil, errors.WithMessage(err, "failed to query configs")
+	}
+
+	return lst, nil
 }
 
 func ConfigsSet(ctx *ctx.Context, ckey, cval string) error {
@@ -163,6 +177,23 @@ func ConfigsGetFlashDutyAppKey(ctx *ctx.Context) (string, error) {
 	}
 	if len(configs) == 0 || configs[0].Cval == "" {
 		return "", errors.New("flashduty_app_key is empty")
+	}
+	// Encrypted equals 1 means the value is encrypted
+	if configs[0].Encrypted == 1 {
+		privateKeyVal, err1 := ConfigsGet(ctx, RSA_PRIVATE_KEY)
+		passwordVal, err2 := ConfigsGet(ctx, RSA_PASSWORD)
+		if err1 != nil || err2 != nil {
+			return "", errors.New("failed to load RSA credentials from config")
+		}
+		decryptMap, decryptErr := ConfigUserVariableGetDecryptMap(ctx, []byte(privateKeyVal), passwordVal)
+		if decryptErr != nil {
+			return "", decryptErr
+		}
+		if val, ok := decryptMap["flashduty_app_key"]; ok {
+			return val, nil
+		} else {
+			return "", errors.New("flashduty_app_key is empty")
+		}
 	}
 	return configs[0].Cval, nil
 }
@@ -354,4 +385,20 @@ func ConfigUserVariableGetDecryptMap(context *ctx.Context, privateKey []byte, pa
 	}
 
 	return ret, nil
+}
+
+func ConfigCvalStatistics(context *ctx.Context) (*Statistics, error) {
+	if !context.IsCenter {
+		return poster.GetByUrls[*Statistics](context, "/v1/n9e/statistic?name=cval")
+	}
+
+	session := DB(context).Model(&Configs{}).Select("count(*) as total",
+		"max(update_at) as last_updated").Where("ckey!='' and external=? ", 0) // built-in config
+
+	var stats []*Statistics
+	err := session.Find(&stats).Error
+	if err != nil {
+		return nil, err
+	}
+	return stats[0], nil
 }

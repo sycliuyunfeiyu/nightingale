@@ -22,6 +22,14 @@ func Init(ctx *ctx.Context, builtinIntegrationsDir string) {
 		return
 	}
 
+	if res, err := models.ConfigsSelectByCkey(ctx, "disable_integration_init"); err != nil {
+		logger.Error("fail to get value 'disable_integration_init' from configs", err)
+		return
+	} else if len(res) != 0 {
+		logger.Info("disable_integration_init is set, skip integration init")
+		return
+	}
+
 	fp := builtinIntegrationsDir
 	if fp == "" {
 		fp = path.Join(runner.Cwd, "integrations")
@@ -111,6 +119,12 @@ func Init(ctx *ctx.Context, builtinIntegrationsDir string) {
 		err = models.DB(ctx).Exec("delete from builtin_metrics where uuid = 0 and (updated_by = 'system' or updated_by = '')").Error
 		if err != nil {
 			logger.Warning("delete builtin metrics fail ", err)
+		}
+
+		// 删除 uuid%1000 不为 0 uuid > 1000000000000000000 且 type 为 dashboard 的记录
+		err = models.DB(ctx).Exec("delete from builtin_payloads where uuid%1000 != 0 and uuid > 1000000000000000000 and type = 'dashboard' and updated_by = 'system'").Error
+		if err != nil {
+			logger.Warning("delete builtin payloads fail ", err)
 		}
 
 		// alerts
@@ -218,7 +232,8 @@ func Init(ctx *ctx.Context, builtinIntegrationsDir string) {
 				}
 
 				if dashboard.UUID == 0 {
-					dashboard.UUID = time.Now().UnixNano()
+					time.Sleep(time.Microsecond)
+					dashboard.UUID = time.Now().UnixMicro()
 					// 补全文件中的 uuid
 					bs, err = json.MarshalIndent(dashboard, "", "    ")
 					if err != nil {

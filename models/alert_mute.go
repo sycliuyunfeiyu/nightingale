@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,9 +19,46 @@ import (
 type TagFilter struct {
 	Key    string              `json:"key"`   // tag key
 	Func   string              `json:"func"`  // `==` | `=~` | `in` | `!=` | `!~` | `not in`
+	Op     string              `json:"op"`    // `==` | `=~` | `in` | `!=` | `!~` | `not in`
 	Value  string              `json:"value"` // tag value
 	Regexp *regexp.Regexp      // parse value to regexp if func = '=~' or '!~'
 	Vset   map[string]struct{} // parse value to regexp if func = 'in' or 'not in'
+}
+
+func (t *TagFilter) Verify() error {
+	if t.Key == "" {
+		return errors.New("tag key cannot be empty")
+	}
+
+	if t.Func == "" {
+		t.Func = t.Op
+	}
+
+	if t.Func != "==" && t.Func != "!=" && t.Func != "in" && t.Func != "not in" &&
+		t.Func != "=~" && t.Func != "!~" {
+		return errors.New("invalid operation")
+	}
+
+	return nil
+}
+
+func ParseTagFilter(bFilters []TagFilter) ([]TagFilter, error) {
+	var err error
+	for i := 0; i < len(bFilters); i++ {
+		if bFilters[i].Func == "=~" || bFilters[i].Func == "!~" {
+			bFilters[i].Regexp, err = regexp.Compile(bFilters[i].Value)
+			if err != nil {
+				return nil, err
+			}
+		} else if bFilters[i].Func == "in" || bFilters[i].Func == "not in" {
+			arr := strings.Fields(bFilters[i].Value)
+			bFilters[i].Vset = make(map[string]struct{})
+			for j := 0; j < len(arr); j++ {
+				bFilters[i].Vset[arr[j]] = struct{}{}
+			}
+		}
+	}
+	return bFilters, nil
 }
 
 func GetTagFilters(jsonArr ormx.JSONArr) ([]TagFilter, error) {
@@ -67,7 +105,8 @@ type AlertMute struct {
 	Cause             string         `json:"cause"`
 	Btime             int64          `json:"btime"`
 	Etime             int64          `json:"etime"`
-	Disabled          int            `json:"disabled"` // 0: enabled, 1: disabled
+	Disabled          int            `json:"disabled"`           // 0: enabled, 1: disabled
+	Activated         int            `json:"activated" gorm:"-"` // 0: not activated, 1: activated
 	CreateBy          string         `json:"create_by"`
 	UpdateBy          string         `json:"update_by"`
 	CreateAt          int64          `json:"create_at"`
@@ -108,7 +147,7 @@ func AlertMuteGet(ctx *ctx.Context, where string, args ...interface{}) (*AlertMu
 	return lst[0], err
 }
 
-func AlertMuteGets(ctx *ctx.Context, prods []string, bgid int64, query string) (lst []AlertMute, err error) {
+func AlertMuteGets(ctx *ctx.Context, prods []string, bgid int64, disabled int, query string) (lst []AlertMute, err error) {
 	session := DB(ctx)
 
 	if bgid != -1 {
@@ -117,6 +156,14 @@ func AlertMuteGets(ctx *ctx.Context, prods []string, bgid int64, query string) (
 
 	if len(prods) > 0 {
 		session = session.Where("prod in (?)", prods)
+	}
+
+	if disabled != -1 {
+		if disabled == 0 {
+			session = session.Where("disabled = 0")
+		} else {
+			session = session.Where("disabled = 1")
+		}
 	}
 
 	if query != "" {
@@ -266,11 +313,58 @@ func (m *AlertMute) DB2FE() error {
 		}
 	}
 
+	// 检查时间范围
+	isWithinTime := false
+	if m.MuteTimeType == TimeRange {
+		isWithinTime = m.IsWithinTimeRange(time.Now().Unix())
+	} else if m.MuteTimeType == Periodic {
+		isWithinTime = m.IsWithinPeriodicMute(time.Now().Unix())
+	} else {
+		logger.Warningf("mute time type invalid, %d", m.MuteTimeType)
+	}
+
+	if isWithinTime {
+		m.Activated = 1
+	} else {
+		m.Activated = 0
+	}
+
 	return err
 }
 
 func (m *AlertMute) UpdateFieldsMap(ctx *ctx.Context, fields map[string]interface{}) error {
 	return DB(ctx).Model(m).Updates(fields).Error
+}
+
+func (m *AlertMute) IsWithinTimeRange(checkTime int64) bool {
+	if checkTime < m.Btime || checkTime > m.Etime {
+		return false
+	}
+	return true
+}
+
+func (m *AlertMute) IsWithinPeriodicMute(checkTime int64) bool {
+	tm := time.Unix(checkTime, 0)
+	triggerTime := tm.Format("15:04")
+	triggerWeek := strconv.Itoa(int(tm.Weekday()))
+
+	for i := 0; i < len(m.PeriodicMutesJson); i++ {
+		if strings.Contains(m.PeriodicMutesJson[i].EnableDaysOfWeek, triggerWeek) {
+			if m.PeriodicMutesJson[i].EnableStime == m.PeriodicMutesJson[i].EnableEtime || (m.PeriodicMutesJson[i].EnableStime == "00:00" && m.PeriodicMutesJson[i].EnableEtime == "23:59") {
+				return true
+			} else if m.PeriodicMutesJson[i].EnableStime < m.PeriodicMutesJson[i].EnableEtime {
+				if triggerTime >= m.PeriodicMutesJson[i].EnableStime && triggerTime < m.PeriodicMutesJson[i].EnableEtime {
+					return true
+				}
+			} else {
+				if triggerTime >= m.PeriodicMutesJson[i].EnableStime || triggerTime < m.PeriodicMutesJson[i].EnableEtime {
+					return true
+				}
+			}
+		}
+	}
+
+	return false
 }
 
 func AlertMuteDel(ctx *ctx.Context, ids []int64) error {
@@ -287,16 +381,9 @@ func AlertMuteStatistics(ctx *ctx.Context) (*Statistics, error) {
 		return s, err
 	}
 
-	// clean expired first
-	buf := int64(30)
-	err := DB(ctx).Where("etime < ? and mute_time_type = 0", time.Now().Unix()-buf).Delete(new(AlertMute)).Error
-	if err != nil {
-		return nil, err
-	}
-
 	session := DB(ctx).Model(&AlertMute{}).Select("count(*) as total", "max(update_at) as last_updated")
 
-	err = session.Find(&stats).Error
+	err := session.Find(&stats).Error
 	if err != nil {
 		return nil, err
 	}
@@ -308,7 +395,7 @@ func AlertMuteGetsAll(ctx *ctx.Context) ([]*AlertMute, error) {
 	// get my cluster's mutes
 	var lst []*AlertMute
 	if !ctx.IsCenter {
-		lst, err := poster.GetByUrls[[]*AlertMute](ctx, "/v1/n9e/alert-mutes")
+		lst, err := poster.GetByUrls[[]*AlertMute](ctx, "/v1/n9e/alert-mutes?disabled=0")
 		if err != nil {
 			return nil, err
 		}
@@ -318,7 +405,7 @@ func AlertMuteGetsAll(ctx *ctx.Context) ([]*AlertMute, error) {
 		return lst, err
 	}
 
-	session := DB(ctx).Model(&AlertMute{})
+	session := DB(ctx).Model(&AlertMute{}).Where("disabled = 0")
 
 	err := session.Find(&lst).Error
 	if err != nil {

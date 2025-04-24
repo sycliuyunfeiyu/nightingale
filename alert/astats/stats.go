@@ -17,12 +17,15 @@ type Stats struct {
 	CounterRuleEval             *prometheus.CounterVec
 	CounterQueryDataErrorTotal  *prometheus.CounterVec
 	CounterQueryDataTotal       *prometheus.CounterVec
+	CounterVarFillingQuery      *prometheus.CounterVec
 	CounterRecordEval           *prometheus.CounterVec
 	CounterRecordEvalErrorTotal *prometheus.CounterVec
 	CounterMuteTotal            *prometheus.CounterVec
 	CounterRuleEvalErrorTotal   *prometheus.CounterVec
 	CounterHeartbeatErrorTotal  *prometheus.CounterVec
 	CounterSubEventTotal        *prometheus.CounterVec
+	GaugeQuerySeriesCount       *prometheus.GaugeVec
+	GaugeNotifyRecordQueueSize  prometheus.Gauge
 }
 
 func NewSyncStats() *Stats {
@@ -38,7 +41,7 @@ func NewSyncStats() *Stats {
 		Subsystem: subsystem,
 		Name:      "rule_eval_error_total",
 		Help:      "Number of rule eval error.",
-	}, []string{"datasource", "stage"})
+	}, []string{"datasource", "stage", "busi_group", "rule_id"})
 
 	CounterQueryDataErrorTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: namespace,
@@ -52,7 +55,7 @@ func NewSyncStats() *Stats {
 		Subsystem: subsystem,
 		Name:      "query_data_total",
 		Help:      "Number of rule eval query data.",
-	}, []string{"datasource"})
+	}, []string{"datasource", "rule_id"})
 
 	CounterRecordEval := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: namespace,
@@ -103,7 +106,7 @@ func NewSyncStats() *Stats {
 		Subsystem: subsystem,
 		Name:      "mute_total",
 		Help:      "Number of mute.",
-	}, []string{"group"})
+	}, []string{"group", "rule_id", "mute_rule_id", "datasource_id"})
 
 	CounterSubEventTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: namespace,
@@ -119,6 +122,27 @@ func NewSyncStats() *Stats {
 		Help:      "Number of heartbeat error.",
 	}, []string{})
 
+	GaugeQuerySeriesCount := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: namespace,
+		Subsystem: subsystem,
+		Name:      "eval_query_series_count",
+		Help:      "Number of series retrieved from data source after query.",
+	}, []string{"rule_id", "datasource_id", "ref"})
+	// 通知记录队列的长度
+	GaugeNotifyRecordQueueSize := prometheus.NewGauge(prometheus.GaugeOpts{
+		Namespace: namespace,
+		Subsystem: subsystem,
+		Name:      "notify_record_queue_size",
+		Help:      "The size of notify record queue.",
+	})
+
+	CounterVarFillingQuery := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: namespace,
+		Subsystem: subsystem,
+		Name:      "var_filling_query_total",
+		Help:      "Number of var filling query.",
+	}, []string{"rule_id", "datasource_id", "ref", "typ"})
+
 	prometheus.MustRegister(
 		CounterAlertsTotal,
 		GaugeAlertQueueSize,
@@ -133,6 +157,9 @@ func NewSyncStats() *Stats {
 		CounterRuleEvalErrorTotal,
 		CounterHeartbeatErrorTotal,
 		CounterSubEventTotal,
+		GaugeQuerySeriesCount,
+		GaugeNotifyRecordQueueSize,
+		CounterVarFillingQuery,
 	)
 
 	return &Stats{
@@ -149,5 +176,8 @@ func NewSyncStats() *Stats {
 		CounterRuleEvalErrorTotal:   CounterRuleEvalErrorTotal,
 		CounterHeartbeatErrorTotal:  CounterHeartbeatErrorTotal,
 		CounterSubEventTotal:        CounterSubEventTotal,
+		GaugeQuerySeriesCount:       GaugeQuerySeriesCount,
+		GaugeNotifyRecordQueueSize:  GaugeNotifyRecordQueueSize,
+		CounterVarFillingQuery:      CounterVarFillingQuery,
 	}
 }

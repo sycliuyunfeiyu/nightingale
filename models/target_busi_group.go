@@ -1,6 +1,7 @@
 package models
 
 import (
+	"strings"
 	"time"
 
 	"github.com/ccfos/nightingale/v6/pkg/ctx"
@@ -18,6 +19,10 @@ type TargetBusiGroup struct {
 
 func (t *TargetBusiGroup) TableName() string {
 	return "target_busi_group"
+}
+
+func (t *TargetBusiGroup) TableOptions() string {
+	return "ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
 }
 
 func TargetBusiGroupsGetAll(ctx *ctx.Context) (map[string][]int64, error) {
@@ -60,7 +65,7 @@ func TargetGroupIdsGetByIdents(ctx *ctx.Context, idents []string) ([]int64, erro
 	return groupIds, nil
 }
 
-func TargetBindBgids(ctx *ctx.Context, idents []string, bgids []int64) error {
+func TargetBindBgids(ctx *ctx.Context, idents []string, bgids []int64, tags []string) error {
 	lst := make([]TargetBusiGroup, 0, len(bgids)*len(idents))
 	updateAt := time.Now().Unix()
 	for _, bgid := range bgids {
@@ -73,7 +78,6 @@ func TargetBindBgids(ctx *ctx.Context, idents []string, bgids []int64) error {
 			lst = append(lst, cur)
 		}
 	}
-
 	var cl clause.Expression = clause.Insert{Modifier: "ignore"}
 	switch DB(ctx).Dialector.Name() {
 	case "sqlite":
@@ -81,7 +85,23 @@ func TargetBindBgids(ctx *ctx.Context, idents []string, bgids []int64) error {
 	case "postgres":
 		cl = clause.OnConflict{DoNothing: true}
 	}
-	return DB(ctx).Clauses(cl).CreateInBatches(&lst, 10).Error
+
+	return DB(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := DB(ctx).Clauses(cl).CreateInBatches(&lst, 10).Error; err != nil {
+			return err
+		}
+		if targets, err := TargetsGetByIdents(ctx, idents); err != nil {
+			return err
+		} else if len(tags) > 0 {
+			for _, t := range targets {
+				if err := t.AddTags(ctx, tags); err != nil {
+					return err
+				}
+			}
+		}
+
+		return nil
+	})
 }
 
 func TargetUnbindBgids(ctx *ctx.Context, idents []string, bgids []int64) error {
@@ -89,11 +109,11 @@ func TargetUnbindBgids(ctx *ctx.Context, idents []string, bgids []int64) error {
 		idents, bgids).Delete(&TargetBusiGroup{}).Error
 }
 
-func TargetDeleteBgids(ctx *ctx.Context, idents []string) error {
-	return DB(ctx).Where("target_ident in ?", idents).Delete(&TargetBusiGroup{}).Error
+func TargetDeleteBgids(tx *gorm.DB, idents []string) error {
+	return tx.Where("target_ident in ?", idents).Delete(&TargetBusiGroup{}).Error
 }
 
-func TargetOverrideBgids(ctx *ctx.Context, idents []string, bgids []int64) error {
+func TargetOverrideBgids(ctx *ctx.Context, idents []string, bgids []int64, tags []string) error {
 	return DB(ctx).Transaction(func(tx *gorm.DB) error {
 		// 先删除旧的关联
 		if err := tx.Where("target_ident IN ?", idents).Delete(&TargetBusiGroup{}).Error; err != nil {
@@ -126,7 +146,15 @@ func TargetOverrideBgids(ctx *ctx.Context, idents []string, bgids []int64) error
 		case "postgres":
 			cl = clause.OnConflict{DoNothing: true}
 		}
-		return tx.Clauses(cl).CreateInBatches(&lst, 10).Error
+		if err := tx.Clauses(cl).CreateInBatches(&lst, 10).Error; err != nil {
+			return err
+		}
+		if len(tags) == 0 {
+			return nil
+		}
+
+		return tx.Model(Target{}).Where("ident IN ?", idents).Updates(map[string]interface{}{
+			"tags": strings.Join(tags, " ") + " ", "update_at": updateAt}).Error
 	})
 }
 
@@ -155,4 +183,14 @@ func SeparateTargetIdents(ctx *ctx.Context, idents []string) (existing, nonExist
 	}
 
 	return
+}
+
+func TargetIndentsGetByBgids(ctx *ctx.Context, bgids []int64) ([]string, error) {
+	var idents []string
+	err := DB(ctx).Model(&TargetBusiGroup{}).
+		Where("group_id IN ?", bgids).
+		Distinct("target_ident").
+		Pluck("target_ident", &idents).
+		Error
+	return idents, err
 }

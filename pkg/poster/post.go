@@ -8,6 +8,8 @@ import (
 	"math/rand"
 	"net/http"
 	urlnet "net/url"
+		"os"
+	"strings"
 	"time"
 
 	"github.com/ccfos/nightingale/v6/conf"
@@ -22,24 +24,32 @@ type DataResponse[T any] struct {
 }
 
 func GetByUrls[T any](ctx *ctx.Context, path string) (T, error) {
-	var err error
 	addrs := ctx.CenterApi.Addrs
+	if len(addrs) == 0 {
+		var dat T
+		return dat, fmt.Errorf("no center api addresses configured")
+	}
 
-	rand.Shuffle(len(addrs), func(i, j int) { addrs[i], addrs[j] = addrs[j], addrs[i] })
-	for _, addr := range addrs {
-		url := fmt.Sprintf("%s%s", addr, path)
-		dat, e := GetByUrl[T](url, ctx.CenterApi)
-		if e != nil {
-			err = e
+	// 随机选择起始位置
+	startIdx := rand.Intn(len(addrs))
+
+	// 从随机位置开始遍历所有地址
+
+	var dat T
+	var err error
+	for i := 0; i < len(addrs); i++ {
+		idx := (startIdx + i) % len(addrs)
+		url := fmt.Sprintf("%s%s", addrs[idx], path)
+
+		dat, err = GetByUrl[T](url, ctx.CenterApi)
+		if err != nil {
 			logger.Warningf("failed to get data from center, url: %s, err: %v", url, err)
 			continue
 		}
 		return dat, nil
 	}
 
-	var dat T
-	err = fmt.Errorf("failed to get data from center, path= %s, ctx.CenterApi.Addrs= %v", path, addrs)
-	return dat, err
+	return dat, fmt.Errorf("failed to get data from center, path= %s, addrs= %v err: %v", path, addrs, err)
 }
 
 func GetByUrl[T any](url string, cfg conf.CenterApi) (T, error) {
@@ -58,6 +68,10 @@ func GetByUrl[T any](url string, cfg conf.CenterApi) (T, error) {
 
 	client := &http.Client{
 		Timeout: time.Duration(cfg.Timeout) * time.Millisecond,
+	}
+
+	if UseProxy(url) {
+		client.Transport = ProxyTransporter
 	}
 
 	resp, err := client.Do(req)
@@ -79,7 +93,7 @@ func GetByUrl[T any](url string, cfg conf.CenterApi) (T, error) {
 	var dataResp DataResponse[T]
 	err = json.Unmarshal(body, &dataResp)
 	if err != nil {
-		return dat, fmt.Errorf("failed to decode response: %w", err)
+		return dat, fmt.Errorf("failed to decode:%s response: %w", string(body), err)
 	}
 
 	if dataResp.Err != "" {
@@ -90,25 +104,32 @@ func GetByUrl[T any](url string, cfg conf.CenterApi) (T, error) {
 	return dataResp.Dat, nil
 }
 
-func PostByUrls(ctx *ctx.Context, path string, v interface{}) (err error) {
+func PostByUrls(ctx *ctx.Context, path string, v interface{}) error {
 	addrs := ctx.CenterApi.Addrs
-
-	rand.Shuffle(len(addrs), func(i, j int) { addrs[i], addrs[j] = addrs[j], addrs[i] })
-	for _, addr := range addrs {
-		url := fmt.Sprintf("%s%s", addr, path)
-
-		_, err = PostByUrl[interface{}](url, ctx.CenterApi, v)
-		if err == nil {
-			return
-		}
-	}
-
-	if len(addrs) < 1 {
-		err = fmt.Errorf("submission of the POST request from the center has failed, "+
+	if len(addrs) == 0 {
+		return fmt.Errorf("submission of the POST request from the center has failed, "+
 			"path= %s, v= %v, ctx.CenterApi.Addrs= %v", path, v, addrs)
 	}
-	return
+
+	// 随机选择起始位置
+	startIdx := rand.Intn(len(addrs))
+
+	// 从随机位置开始遍历所有地址
+	for i := 0; i < len(addrs); i++ {
+		idx := (startIdx + i) % len(addrs)
+		url := fmt.Sprintf("%s%s", addrs[idx], path)
+
+		_, err := PostByUrl[interface{}](url, ctx.CenterApi, v)
+		if err != nil {
+			logger.Warningf("failed to post data to center, url: %s, err: %v", url, err)
+			continue
+		}
+		return nil
+	}
+
+	return fmt.Errorf("failed to post data to center, path= %s, addrs= %v", path, addrs)
 }
+
 func PostByUrlsWithResp[T any](ctx *ctx.Context, path string, v interface{}) (t T, err error) {
 	addrs := ctx.CenterApi.Addrs
 	if len(addrs) < 1 {
@@ -116,14 +137,24 @@ func PostByUrlsWithResp[T any](ctx *ctx.Context, path string, v interface{}) (t 
 			"path= %s, v= %v, ctx.CenterApi.Addrs= %v", path, v, addrs)
 		return
 	}
-	rand.Shuffle(len(addrs), func(i, j int) { addrs[i], addrs[j] = addrs[j], addrs[i] })
-	for _, addr := range addrs {
-		t, err = PostByUrl[T](fmt.Sprintf("%s%s", addr, path), ctx.CenterApi, v)
-		if err == nil {
-			break
+
+	// 随机选择起始位置
+	startIdx := rand.Intn(len(addrs))
+
+	// 从随机位置开始遍历所有地址
+	for i := 0; i < len(addrs); i++ {
+		idx := (startIdx + i) % len(addrs)
+		url := fmt.Sprintf("%s%s", addrs[idx], path)
+
+		t, err = PostByUrl[T](url, ctx.CenterApi, v)
+		if err != nil {
+			logger.Warningf("failed to post data to center, url: %s, err: %v", url, err)
+			continue
 		}
+		return t, nil
 	}
-	return
+
+	return t, fmt.Errorf("failed to post data to center, path= %s, addrs= %v err: %v", path, addrs, err)
 }
 
 func PostByUrl[T any](url string, cfg conf.CenterApi, v interface{}) (t T, err error) {
@@ -138,6 +169,10 @@ func PostByUrl[T any](url string, cfg conf.CenterApi, v interface{}) (t T, err e
 	}
 	client := http.Client{
 		Timeout: time.Duration(cfg.Timeout) * time.Millisecond,
+	}
+
+	if UseProxy(url) {
+		client.Transport = ProxyTransporter
 	}
 
 	req, err := http.NewRequest("POST", url, bf)
@@ -180,6 +215,29 @@ func PostByUrl[T any](url string, cfg conf.CenterApi, v interface{}) (t T, err e
 
 }
 
+var ProxyTransporter = &http.Transport{
+	Proxy: http.ProxyFromEnvironment,
+}
+
+func UseProxy(url string) bool {
+	// N9E_PROXY_URL=oapi.dingtalk.com,feishu.com
+	patterns := os.Getenv("N9E_PROXY_URL")
+	if patterns != "" {
+		// 说明要让某些 URL 走代理
+		for _, u := range strings.Split(patterns, ",") {
+			u = strings.TrimSpace(u)
+			if u == "" {
+				continue
+			}
+
+			if strings.Contains(url, u) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func PostJSON(url string, timeout time.Duration, v interface{}, retries ...int) (response []byte, code int, err error) {
 	var bs []byte
 	bs, err = json.Marshal(v)
@@ -191,6 +249,11 @@ func PostJSON(url string, timeout time.Duration, v interface{}, retries ...int) 
 	client := http.Client{
 		Timeout: timeout,
 	}
+
+	if UseProxy(url) {
+		client.Transport = ProxyTransporter
+	}
+
 	req, err := http.NewRequest("POST", url, bf)
 	if err != nil {
 		return

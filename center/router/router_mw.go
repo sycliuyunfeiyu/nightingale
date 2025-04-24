@@ -17,6 +17,10 @@ import (
 	"github.com/toolkits/pkg/ginx"
 )
 
+const (
+	DefaultTokenKey = "X-User-Token"
+)
+
 type AccessDetails struct {
 	AccessUuid   string
 	UserIdentity string
@@ -62,8 +66,29 @@ func (rt *Router) proxyAuth() gin.HandlerFunc {
 	}
 }
 
-func (rt *Router) jwtAuth() gin.HandlerFunc {
+// tokenAuth 支持两种方式的认证，固定 token 和 jwt token
+// 因为不太好区分用户使用哪个方式，所以两种方式放在一个中间件里
+func (rt *Router) tokenAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// 先验证固定 token
+		if rt.HTTP.TokenAuth.Enable {
+			tokenKey := rt.HTTP.TokenAuth.HeaderUserTokenKey
+			if tokenKey == "" {
+				tokenKey = DefaultTokenKey
+			}
+			token := c.GetHeader(tokenKey)
+			if token != "" {
+				user := rt.UserTokenCache.GetByToken(token)
+				if user != nil && user.Username != "" {
+					c.Set("userid", user.Id)
+					c.Set("username", user.Username)
+					c.Next()
+					return
+				}
+			}
+		}
+
+		// 再验证 jwt token
 		metadata, err := rt.extractTokenMetadata(c.Request)
 		if err != nil {
 			ginx.Bomb(http.StatusUnauthorized, "unauthorized")
@@ -100,7 +125,7 @@ func (rt *Router) auth() gin.HandlerFunc {
 	if rt.HTTP.ProxyAuth.Enable {
 		return rt.proxyAuth()
 	} else {
-		return rt.jwtAuth()
+		return rt.tokenAuth()
 	}
 }
 
@@ -130,9 +155,9 @@ func (rt *Router) User() gin.HandlerFunc {
 
 func (rt *Router) user() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		userid := c.MustGet("userid").(int64)
+		username := c.MustGet("username").(string)
 
-		user, err := models.UserGetById(rt.Ctx, userid)
+		user, err := models.UserGetByUsername(rt.Ctx, username)
 		if err != nil {
 			ginx.Bomb(http.StatusUnauthorized, "unauthorized")
 		}
@@ -310,6 +335,12 @@ func (rt *Router) extractTokenMetadata(r *http.Request) (*AccessDetails, error) 
 			return nil, errors.New("failed to parse access_uuid from jwt")
 		}
 
+		// accessUuid 在 redis 里存在才放行
+		val, err := rt.fetchAuth(r.Context(), accessUuid)
+		if err != nil || val == "" {
+			return nil, errors.New("unauthorized")
+		}
+
 		return &AccessDetails{
 			AccessUuid:   accessUuid,
 			UserIdentity: claims["user_identity"].(string),
@@ -330,18 +361,43 @@ func (rt *Router) extractToken(r *http.Request) string {
 }
 
 func (rt *Router) createAuth(ctx context.Context, userIdentity string, td *TokenDetails) error {
+	username := strings.Split(userIdentity, "-")[1]
+
+	// 如果只能有一个账号登录，那么就删除之前的 token
+	if rt.HTTP.JWTAuth.SingleLogin {
+		delKeys, err := rt.Redis.SMembers(ctx, rt.wrapJwtKey(username)).Result()
+		if err != nil {
+			return err
+		}
+
+		if len(delKeys) > 0 {
+			errDel := rt.Redis.Del(ctx, delKeys...).Err()
+			if errDel != nil {
+				return errDel
+			}
+		}
+
+		if errDel := rt.Redis.Del(ctx, rt.wrapJwtKey(username)).Err(); errDel != nil {
+			return errDel
+		}
+	}
+
 	at := time.Unix(td.AtExpires, 0)
 	rte := time.Unix(td.RtExpires, 0)
 	now := time.Now()
 
-	errAccess := rt.Redis.Set(ctx, rt.wrapJwtKey(td.AccessUuid), userIdentity, at.Sub(now)).Err()
-	if errAccess != nil {
-		return errAccess
+	if err := rt.Redis.Set(ctx, rt.wrapJwtKey(td.AccessUuid), userIdentity, at.Sub(now)).Err(); err != nil {
+		return err
 	}
 
-	errRefresh := rt.Redis.Set(ctx, rt.wrapJwtKey(td.RefreshUuid), userIdentity, rte.Sub(now)).Err()
-	if errRefresh != nil {
-		return errRefresh
+	if err := rt.Redis.Set(ctx, rt.wrapJwtKey(td.RefreshUuid), userIdentity, rte.Sub(now)).Err(); err != nil {
+		return err
+	}
+
+	if rt.HTTP.JWTAuth.SingleLogin {
+		if err := rt.Redis.SAdd(ctx, rt.wrapJwtKey(username), rt.wrapJwtKey(td.AccessUuid), rt.wrapJwtKey(td.RefreshUuid)).Err(); err != nil {
+			return err
+		}
 	}
 
 	return nil

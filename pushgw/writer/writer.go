@@ -3,14 +3,17 @@ package writer
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
-	"net"
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/IBM/sarama"
 	"github.com/ccfos/nightingale/v6/pkg/fasttime"
+	"github.com/ccfos/nightingale/v6/pushgw/kafka"
 	"github.com/ccfos/nightingale/v6/pushgw/pconf"
 
 	"github.com/golang/protobuf/proto"
@@ -24,38 +27,14 @@ type WriterType struct {
 	Opts             pconf.WriterOptions
 	ForceUseServerTS bool
 	Client           api.Client
+	RetryCount       int
+	RetryInterval    int64 // 单位秒
 }
 
-func (w WriterType) writeRelabel(items []prompb.TimeSeries) []prompb.TimeSeries {
-	ritems := make([]prompb.TimeSeries, 0, len(items))
-	for _, item := range items {
-		lbls := Process(item.Labels, w.Opts.WriteRelabels...)
-		if len(lbls) == 0 {
-			continue
-		}
-		item.Labels = lbls
-		ritems = append(ritems, item)
-	}
-	return ritems
-}
-
-func (w WriterType) Write(key string, items []prompb.TimeSeries, headers ...map[string]string) {
-	if len(items) == 0 {
-		return
-	}
-
-	items = w.writeRelabel(items)
-	if len(items) == 0 {
-		return
-	}
-
+func beforeWrite(key string, items []prompb.TimeSeries, forceUseServerTS bool, encodeType string) ([]byte, error) {
 	CounterWirteTotal.WithLabelValues(key).Add(float64(len(items)))
-	start := time.Now()
-	defer func() {
-		ForwardDuration.WithLabelValues(key).Observe(time.Since(start).Seconds())
-	}()
 
-	if w.ForceUseServerTS {
+	if forceUseServerTS {
 		ts := int64(fasttime.UnixTimestamp()) * 1000
 		for i := 0; i < len(items); i++ {
 			if len(items[i].Samples) == 0 {
@@ -65,31 +44,64 @@ func (w WriterType) Write(key string, items []prompb.TimeSeries, headers ...map[
 		}
 	}
 
-	req := &prompb.WriteRequest{
-		Timeseries: items,
+	if encodeType == "proto" {
+		req := &prompb.WriteRequest{
+			Timeseries: items,
+		}
+
+		return proto.Marshal(req)
 	}
 
-	data, err := proto.Marshal(req)
+	return json.Marshal(items)
+}
+
+func (w WriterType) Write(key string, items []prompb.TimeSeries, headers ...map[string]string) {
+	if len(items) == 0 {
+		return
+	}
+
+	items = Relabel(items, w.Opts.WriteRelabels)
+	if len(items) == 0 {
+		return
+	}
+
+	start := time.Now()
+	defer func() {
+		ForwardDuration.WithLabelValues(key).Observe(time.Since(start).Seconds())
+	}()
+
+	data, err := beforeWrite(key, items, w.ForceUseServerTS, "proto")
 	if err != nil {
 		logger.Warningf("marshal prom data to proto got error: %v, data: %+v", err, items)
 		return
 	}
 
-	if err := w.Post(snappy.Encode(nil, data), headers...); err != nil {
+	for i := 0; i < w.RetryCount; i++ {
+		err := w.Post(snappy.Encode(nil, data), headers...)
+		if err == nil {
+			break
+		}
+
 		CounterWirteErrorTotal.WithLabelValues(key).Add(float64(len(items)))
-		logger.Warningf("post to %s got error: %v", w.Opts.Url, err)
-		logger.Warning("example timeseries:", items[0].String())
+		logger.Warningf("post to %s got error: %v in %d times", w.Opts.Url, err, i)
+
+		if i == 0 {
+			logger.Warning("example timeseries:", items[0].String())
+		}
+
+		time.Sleep(time.Duration(w.RetryInterval) * time.Second)
 	}
 }
 
 func (w WriterType) Post(req []byte, headers ...map[string]string) error {
 	urls := strings.Split(w.Opts.Url, ",")
 	var err error
+	var newRequestErr error
 	var httpReq *http.Request
 	for _, url := range urls {
-		httpReq, err = http.NewRequest("POST", url, bytes.NewReader(req))
-		if err != nil {
-			logger.Warningf("create remote write:%s request got error: %s", url, err.Error())
+		httpReq, newRequestErr = http.NewRequest("POST", url, bytes.NewReader(req))
+		if newRequestErr != nil {
+			logger.Warningf("create remote write:%s request got error: %s", url, newRequestErr.Error())
 			continue
 		}
 
@@ -125,12 +137,18 @@ func (w WriterType) Post(req []byte, headers ...map[string]string) error {
 			continue
 		}
 
-		if resp.StatusCode >= 400 {
+		if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+			logger.Warningf("push data with remote write:%s request got status code: %v, response body: %s", url, resp.StatusCode, string(body))
+			continue
+		}
+
+		if resp.StatusCode >= 500 {
 			err = fmt.Errorf("push data with remote write:%s request got status code: %v, response body: %s", url, resp.StatusCode, string(body))
 			logger.Warning(err)
 			continue
 		}
 
+		err = nil
 		break
 	}
 
@@ -138,9 +156,10 @@ func (w WriterType) Post(req []byte, headers ...map[string]string) error {
 }
 
 type WritersType struct {
-	pushgw   pconf.Pushgw
-	backends map[string]WriterType
-	queues   map[string]*IdentQueue
+	pushgw      pconf.Pushgw
+	backends    map[string]Writer
+	queues      map[string]*IdentQueue
+	AllQueueLen atomic.Value
 	sync.RWMutex
 }
 
@@ -150,29 +169,43 @@ type IdentQueue struct {
 	ts      int64
 }
 
-func (ws *WritersType) ReportQueueStats(ident string, identQueue *IdentQueue) (interface{}, bool) {
+func (ws *WritersType) ReportQueueStats(queueid string, identQueue *IdentQueue) (interface{}, bool) {
 	for {
-		time.Sleep(60 * time.Second)
+		time.Sleep(15 * time.Second)
 		count := identQueue.list.Len()
-		if count > ws.pushgw.IdentStatsThreshold {
-			GaugeSampleQueueSize.WithLabelValues(ident).Set(float64(count))
+		GaugeSampleQueueSize.WithLabelValues(queueid).Set(float64(count))
+	}
+}
+
+func (ws *WritersType) SetAllQueueLen() {
+	for {
+		curMetricLen := 0
+		ws.RLock()
+		for _, q := range ws.queues {
+			curMetricLen += q.list.Len()
 		}
+		ws.RUnlock()
+		ws.AllQueueLen.Store(int64(curMetricLen))
+		time.Sleep(time.Duration(ws.pushgw.WriterOpt.AllQueueMaxSizeInterval) * time.Millisecond)
 	}
 }
 
 func NewWriters(pushgwConfig pconf.Pushgw) *WritersType {
 	writers := &WritersType{
-		backends: make(map[string]WriterType),
-		queues:   make(map[string]*IdentQueue),
-		pushgw:   pushgwConfig,
+		backends:    make(map[string]Writer),
+		queues:      make(map[string]*IdentQueue),
+		pushgw:      pushgwConfig,
+		AllQueueLen: atomic.Value{},
 	}
 
 	writers.Init()
+
+	go writers.SetAllQueueLen()
 	go writers.CleanExpQueue()
 	return writers
 }
 
-func (ws *WritersType) Put(name string, writer WriterType) {
+func (ws *WritersType) Put(name string, writer Writer) {
 	ws.backends[name] = writer
 }
 
@@ -197,31 +230,38 @@ func (ws *WritersType) CleanExpQueue() {
 	}
 }
 
-func (ws *WritersType) PushSample(ident string, v interface{}) {
+func (ws *WritersType) PushSample(queueid string, v interface{}) error {
 	ws.RLock()
-	identQueue := ws.queues[ident]
+	queue := ws.queues[queueid]
 	ws.RUnlock()
-	if identQueue == nil {
-		identQueue = &IdentQueue{
+	if queue == nil {
+		queue = &IdentQueue{
 			list:    NewSafeListLimited(ws.pushgw.WriterOpt.QueueMaxSize),
 			closeCh: make(chan struct{}),
 			ts:      time.Now().Unix(),
 		}
 
 		ws.Lock()
-		ws.queues[ident] = identQueue
+		ws.queues[queueid] = queue
 		ws.Unlock()
 
-		go ws.ReportQueueStats(ident, identQueue)
-		go ws.StartConsumer(identQueue)
+		go ws.ReportQueueStats(queueid, queue)
+		go ws.StartConsumer(queue)
 	}
 
-	identQueue.ts = time.Now().Unix()
-	succ := identQueue.list.PushFront(v)
+	queue.ts = time.Now().Unix()
+
+	succ := queue.list.PushFront(v)
 	if !succ {
-		logger.Warningf("Write channel(%s) full, current channel size: %d", ident, identQueue.list.Len())
-		CounterPushQueueErrorTotal.WithLabelValues(ident).Inc()
+		logger.Warningf("Write channel(%s) full, current channel size: %d, item: %+v", queueid, queue.list.Len(), v)
+		CounterPushQueueErrorTotal.WithLabelValues(queueid).Inc()
 	}
+
+	return nil
+}
+
+type Writer interface {
+	Write(string, []prompb.TimeSeries, ...map[string]string)
 }
 
 func (ws *WritersType) StartConsumer(identQueue *IdentQueue) {
@@ -244,36 +284,22 @@ func (ws *WritersType) StartConsumer(identQueue *IdentQueue) {
 }
 
 func (ws *WritersType) Init() error {
+	ws.AllQueueLen.Store(int64(0))
+
+	if err := ws.initWriters(); err != nil {
+		return err
+	}
+
+	return ws.initKafkaWriters()
+}
+
+func (ws *WritersType) initWriters() error {
 	opts := ws.pushgw.Writers
 
-	for i := 0; i < len(opts); i++ {
-		tlsConf, err := opts[i].ClientConfig.TLSConfig()
-		if err != nil {
-			return err
-		}
-
-		trans := &http.Transport{
-			Proxy: http.ProxyFromEnvironment,
-			DialContext: (&net.Dialer{
-				Timeout:   time.Duration(opts[i].DialTimeout) * time.Millisecond,
-				KeepAlive: time.Duration(opts[i].KeepAlive) * time.Millisecond,
-			}).DialContext,
-			ResponseHeaderTimeout: time.Duration(opts[i].Timeout) * time.Millisecond,
-			TLSHandshakeTimeout:   time.Duration(opts[i].TLSHandshakeTimeout) * time.Millisecond,
-			ExpectContinueTimeout: time.Duration(opts[i].ExpectContinueTimeout) * time.Millisecond,
-			MaxConnsPerHost:       opts[i].MaxConnsPerHost,
-			MaxIdleConns:          opts[i].MaxIdleConns,
-			MaxIdleConnsPerHost:   opts[i].MaxIdleConnsPerHost,
-			IdleConnTimeout:       time.Duration(opts[i].IdleConnTimeout) * time.Millisecond,
-		}
-
-		if tlsConf != nil {
-			trans.TLSClientConfig = tlsConf
-		}
-
+	for i := range opts {
 		cli, err := api.NewClient(api.Config{
 			Address:      opts[i].Url,
-			RoundTripper: trans,
+			RoundTripper: opts[i].HTTPTransport,
 		})
 
 		if err != nil {
@@ -284,9 +310,64 @@ func (ws *WritersType) Init() error {
 			Opts:             opts[i],
 			Client:           cli,
 			ForceUseServerTS: ws.pushgw.ForceUseServerTS,
+			RetryCount:       ws.pushgw.WriterOpt.RetryCount,
+			RetryInterval:    ws.pushgw.WriterOpt.RetryInterval,
 		}
 
 		ws.Put(opts[i].Url, writer)
+	}
+
+	return nil
+}
+
+func initKakfaSASL(cfg *sarama.Config, opt pconf.KafkaWriterOptions) {
+	if opt.SASL != nil && opt.SASL.Enable {
+		cfg.Net.SASL.Enable = true
+		cfg.Net.SASL.User = opt.SASL.User
+		cfg.Net.SASL.Password = opt.SASL.Password
+		cfg.Net.SASL.Mechanism = sarama.SASLMechanism(opt.SASL.Mechanism)
+		cfg.Net.SASL.Version = opt.SASL.Version
+		cfg.Net.SASL.Handshake = opt.SASL.Handshake
+		cfg.Net.SASL.AuthIdentity = opt.SASL.AuthIdentity
+	}
+}
+
+func (ws *WritersType) initKafkaWriters() error {
+	opts := ws.pushgw.KafkaWriters
+
+	for i := 0; i < len(opts); i++ {
+		cfg := sarama.NewConfig()
+		initKakfaSASL(cfg, opts[i])
+		if opts[i].Timeout != 0 {
+			cfg.Producer.Timeout = time.Duration(opts[i].Timeout) * time.Second
+		}
+		if opts[i].Version != "" {
+			kafkaVersion, err := sarama.ParseKafkaVersion(opts[i].Version)
+			if err != nil {
+				logger.Warningf("parse kafka version got error: %v", err)
+			} else {
+				cfg.Version = kafkaVersion
+			}
+		}
+
+		if opts[i].Typ == "" {
+			opts[i].Typ = kafka.AsyncProducer
+		}
+
+		producer, err := kafka.New(opts[i].Typ, opts[i].Brokers, cfg)
+		if err != nil {
+			logger.Warningf("new kafka producer got error: %v", err)
+			return err
+		}
+
+		writer := KafkaWriterType{
+			Opts:             opts[i],
+			ForceUseServerTS: ws.pushgw.ForceUseServerTS,
+			Client:           producer,
+			RetryCount:       ws.pushgw.WriterOpt.RetryCount,
+			RetryInterval:    ws.pushgw.WriterOpt.RetryInterval,
+		}
+		ws.Put(fmt.Sprintf("%v_%s", opts[i].Brokers, opts[i].Topic), writer)
 	}
 
 	return nil

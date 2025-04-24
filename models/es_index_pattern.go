@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/ccfos/nightingale/v6/pkg/ctx"
+	"github.com/ccfos/nightingale/v6/pkg/poster"
 
 	"github.com/pkg/errors"
 )
@@ -20,6 +21,8 @@ type EsIndexPattern struct {
 	CreateBy                   string `json:"create_by"`
 	UpdateAt                   int64  `json:"update_at"`
 	UpdateBy                   string `json:"update_by"`
+	CrossClusterEnabled        int    `json:"cross_cluster_enabled"`
+	Note                       string `json:"note"`
 }
 
 func (t *EsIndexPattern) TableName() string {
@@ -83,6 +86,10 @@ func (feIndexPatten *EsIndexPattern) FE2DB() {
 }
 
 func EsIndexPatternGets(ctx *ctx.Context, where string, args ...interface{}) ([]*EsIndexPattern, error) {
+	if !ctx.IsCenter {
+		lst, err := poster.GetByUrls[[]*EsIndexPattern](ctx, "/v1/n9e/es-index-pattern-list")
+		return lst, err
+	}
 	var objs []*EsIndexPattern
 	err := DB(ctx).Where(where, args...).Find(&objs).Error
 	if err != nil {

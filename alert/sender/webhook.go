@@ -59,17 +59,21 @@ func sendWebhook(webhook *models.Webhook, event interface{}, stats *astats.Stats
 	if webhook != nil {
 		insecureSkipVerify = webhook.SkipVerify
 	}
-	client := http.Client{
-		Timeout: time.Duration(conf.Timeout) * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: insecureSkipVerify},
-		},
+
+	if conf.Client == nil {
+		logger.Warningf("event_%s, event:%s, url: [%s], error: [%s]", channel, string(bs), conf.Url, "client is nil")
+		conf.Client = &http.Client{
+			Timeout: time.Duration(conf.Timeout) * time.Second,
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: insecureSkipVerify},
+			},
+		}
 	}
 
 	stats.AlertNotifyTotal.WithLabelValues(channel).Inc()
 	var resp *http.Response
 	var body []byte
-	resp, err = client.Do(req)
+	resp, err = conf.Client.Do(req)
 
 	if err != nil {
 		stats.AlertNotifyErrorTotal.WithLabelValues(channel).Inc()
@@ -91,12 +95,12 @@ func sendWebhook(webhook *models.Webhook, event interface{}, stats *astats.Stats
 	return false, string(body), nil
 }
 
-func SingleSendWebhooks(ctx *ctx.Context, webhooks []*models.Webhook, event *models.AlertCurEvent, stats *astats.Stats) {
+func SingleSendWebhooks(ctx *ctx.Context, webhooks map[string]*models.Webhook, event *models.AlertCurEvent, stats *astats.Stats) {
 	for _, conf := range webhooks {
 		retryCount := 0
 		for retryCount < 3 {
 			needRetry, res, err := sendWebhook(conf, event, stats)
-			NotifyRecord(ctx, event, "webhook", conf.Url, res, err)
+			NotifyRecord(ctx, []*models.AlertCurEvent{event}, 0, "webhook", conf.Url, res, err)
 			if !needRetry {
 				break
 			}
@@ -106,7 +110,7 @@ func SingleSendWebhooks(ctx *ctx.Context, webhooks []*models.Webhook, event *mod
 	}
 }
 
-func BatchSendWebhooks(ctx *ctx.Context, webhooks []*models.Webhook, event *models.AlertCurEvent, stats *astats.Stats) {
+func BatchSendWebhooks(ctx *ctx.Context, webhooks map[string]*models.Webhook, event *models.AlertCurEvent, stats *astats.Stats) {
 	for _, conf := range webhooks {
 		logger.Infof("push event:%+v to queue:%v", event, conf)
 		PushEvent(ctx, conf, event, stats)
@@ -121,8 +125,8 @@ var EventQueueLock sync.RWMutex
 const QueueMaxSize = 100000
 
 type WebhookQueue struct {
-	list    *SafeListLimited
-	closeCh chan struct{}
+	eventQueue *SafeEventQueue
+	closeCh    chan struct{}
 }
 
 func PushEvent(ctx *ctx.Context, webhook *models.Webhook, event *models.AlertCurEvent, stats *astats.Stats) {
@@ -132,8 +136,8 @@ func PushEvent(ctx *ctx.Context, webhook *models.Webhook, event *models.AlertCur
 
 	if queue == nil {
 		queue = &WebhookQueue{
-			list:    NewSafeListLimited(QueueMaxSize),
-			closeCh: make(chan struct{}),
+			eventQueue: NewSafeEventQueue(QueueMaxSize),
+			closeCh:    make(chan struct{}),
 		}
 
 		EventQueueLock.Lock()
@@ -143,10 +147,10 @@ func PushEvent(ctx *ctx.Context, webhook *models.Webhook, event *models.AlertCur
 		StartConsumer(ctx, queue, webhook.Batch, webhook, stats)
 	}
 
-	succ := queue.list.PushFront(event)
+	succ := queue.eventQueue.Push(event)
 	if !succ {
 		stats.AlertNotifyErrorTotal.WithLabelValues("push_event_queue").Inc()
-		logger.Warningf("Write channel(%s) full, current channel size: %d event:%v", webhook.Url, queue.list.Len(), event)
+		logger.Warningf("Write channel(%s) full, current channel size: %d event:%v", webhook.Url, queue.eventQueue.Len(), event)
 	}
 }
 
@@ -157,7 +161,7 @@ func StartConsumer(ctx *ctx.Context, queue *WebhookQueue, popSize int, webhook *
 			logger.Infof("event queue:%v closed", queue)
 			return
 		default:
-			events := queue.list.PopBack(popSize)
+			events := queue.eventQueue.PopN(popSize)
 			if len(events) == 0 {
 				time.Sleep(time.Millisecond * 400)
 				continue
@@ -166,7 +170,7 @@ func StartConsumer(ctx *ctx.Context, queue *WebhookQueue, popSize int, webhook *
 			retryCount := 0
 			for retryCount < webhook.RetryCount {
 				needRetry, res, err := sendWebhook(webhook, events, stats)
-				go RecordEvents(ctx, webhook, events, stats, res, err)
+				go NotifyRecord(ctx, events, 0, "webhook", webhook.Url, res, err)
 				if !needRetry {
 					break
 				}
@@ -174,12 +178,5 @@ func StartConsumer(ctx *ctx.Context, queue *WebhookQueue, popSize int, webhook *
 				time.Sleep(time.Second * time.Duration(webhook.RetryInterval) * time.Duration(retryCount))
 			}
 		}
-	}
-}
-
-func RecordEvents(ctx *ctx.Context, webhook *models.Webhook, events []*models.AlertCurEvent, stats *astats.Stats, res string, err error) {
-	for _, event := range events {
-		time.Sleep(time.Millisecond * 10)
-		NotifyRecord(ctx, event, "webhook", webhook.Url, res, err)
 	}
 }

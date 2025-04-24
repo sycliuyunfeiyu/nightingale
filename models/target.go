@@ -12,11 +12,13 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/toolkits/pkg/container/set"
+	"github.com/toolkits/pkg/slice"
+	"github.com/toolkits/pkg/logger"
 
 	"gorm.io/gorm"
 )
 
-type TargetDeleteHookFunc func(ctx *ctx.Context, idents []string) error
+type TargetDeleteHookFunc func(tx *gorm.DB, idents []string) error
 
 type Target struct {
 	Id           int64             `json:"id" gorm:"primaryKey"`
@@ -34,15 +36,16 @@ type Target struct {
 	OS           string            `json:"os" gorm:"column:os"`
 	HostTags     []string          `json:"host_tags" gorm:"serializer:json"`
 
-	UnixTime   int64   `json:"unixtime" gorm:"-"`
-	Offset     int64   `json:"offset" gorm:"-"`
-	TargetUp   float64 `json:"target_up" gorm:"-"`
-	MemUtil    float64 `json:"mem_util" gorm:"-"`
-	CpuNum     int     `json:"cpu_num" gorm:"-"`
-	CpuUtil    float64 `json:"cpu_util" gorm:"-"`
-	Arch       string  `json:"arch" gorm:"-"`
-	RemoteAddr string  `json:"remote_addr" gorm:"-"`
-	GroupIds   []int64 `json:"group_ids" gorm:"-"`
+	UnixTime   int64    `json:"unixtime" gorm:"-"`
+	Offset     int64    `json:"offset" gorm:"-"`
+	TargetUp   float64  `json:"target_up" gorm:"-"`
+	MemUtil    float64  `json:"mem_util" gorm:"-"`
+	CpuNum     int      `json:"cpu_num" gorm:"-"`
+	CpuUtil    float64  `json:"cpu_util" gorm:"-"`
+	Arch       string   `json:"arch" gorm:"-"`
+	RemoteAddr string   `json:"remote_addr" gorm:"-"`
+	GroupIds   []int64  `json:"group_ids" gorm:"-"`
+	GroupNames []string `json:"group_names" gorm:"-"`
 }
 
 func (t *Target) TableName() string {
@@ -129,11 +132,11 @@ func TargetDel(ctx *ctx.Context, idents []string, deleteHook TargetDeleteHookFun
 		if txErr != nil {
 			return txErr
 		}
-		txErr = deleteHook(ctx, idents)
+		txErr = deleteHook(tx, idents)
 		if txErr != nil {
 			return txErr
 		}
-		txErr = TargetDeleteBgids(ctx, idents)
+		txErr = TargetDeleteBgids(tx, idents)
 		if txErr != nil {
 			return txErr
 		}
@@ -184,8 +187,16 @@ func BuildTargetWhereWithQuery(query string) BuildTargetWhereOption {
 		if query != "" {
 			arr := strings.Fields(query)
 			for i := 0; i < len(arr); i++ {
-				q := "%" + arr[i] + "%"
-				session = session.Where("ident like ? or host_ip like ? or note like ? or tags like ? or host_tags like ? or os like ?", q, q, q, q, q, q)
+				if strings.HasPrefix(arr[i], "-") {
+					q := "%" + arr[i][1:] + "%"
+					session = session.Where("ident not like ? and host_ip not like ? and "+
+						"note not like ? and tags not like ? and (host_tags not like ? or "+
+						"host_tags is null) and os not like ?", q, q, q, q, q, q)
+				} else {
+					q := "%" + arr[i] + "%"
+					session = session.Where("ident like ? or host_ip like ? or note like ? or "+
+						"tags like ? or host_tags like ? or os like ?", q, q, q, q, q, q)
+				}
 			}
 		}
 		return session
@@ -196,6 +207,8 @@ func BuildTargetWhereWithDowntime(downtime int64) BuildTargetWhereOption {
 	return func(session *gorm.DB) *gorm.DB {
 		if downtime > 0 {
 			session = session.Where("target.update_at < ?", time.Now().Unix()-downtime)
+		} else if downtime < 0 {
+			session = session.Where("target.update_at > ?", time.Now().Unix()+downtime)
 		}
 		return session
 	}
@@ -269,7 +282,11 @@ func TargetFilterQueryBuild(ctx *ctx.Context, query []map[string]interface{}, li
 	for _, q := range query {
 		tx := DB(ctx).Model(&Target{})
 		for k, v := range q {
-			tx = tx.Or(k, v)
+			if strings.Count(k, "?") > 1 {
+				tx = tx.Or(k, v.([]interface{})...)
+			} else {
+				tx = tx.Or(k, v)
+			}
 		}
 		sub = sub.Where(tx)
 	}
@@ -408,7 +425,64 @@ func TargetsGetIdentsByIdentsAndHostIps(ctx *ctx.Context, idents, hostIps []stri
 	return inexistence, identSet.ToSlice(), nil
 }
 
-func TargetGetTags(ctx *ctx.Context, idents []string, ignoreHostTag bool) ([]string, error) {
+func TargetsGetIdsByIdentsAndHostIps(ctx *ctx.Context, idents, hostIps []string) (
+	map[string]string, []int64, error) {
+	inexistence := make(map[string]string)
+	idSet := set.NewInt64Set()
+
+	if len(idents) > 0 {
+		var identToIdMap []struct {
+			Ident string
+			Id    int64
+		}
+		err := DB(ctx).Model(&Target{}).Select("id, ident").Where("ident IN ?", idents).Scan(&identToIdMap).Error
+		if err != nil {
+			return nil, nil, err
+		}
+
+		identSet := set.NewStringSet()
+		for _, entry := range identToIdMap {
+			idSet.Add(entry.Id)
+			identSet.Add(entry.Ident)
+		}
+
+		for _, ident := range idents {
+			if !identSet.Exists(ident) {
+				inexistence[ident] = "Ident not found"
+			}
+		}
+	}
+
+	// Query the hostIp corresponding to idents
+	if len(hostIps) > 0 {
+		var hostIpMap []struct {
+			HostIp string
+			Ident  string
+			Id     int64
+		}
+		err := DB(ctx).Model(&Target{}).Select("id, host_ip").Where("host_ip IN ?", hostIps).Scan(&hostIpMap).Error
+		if err != nil {
+			return nil, nil, err
+		}
+
+		hostIpSet := set.NewStringSet()
+		for _, entry := range hostIpMap {
+			hostIpSet.Add(entry.HostIp)
+			idSet.Add(entry.Id)
+		}
+
+		for _, hostIp := range hostIps {
+			if !hostIpSet.Exists(hostIp) {
+				inexistence[hostIp] = "HostIp not found"
+			}
+		}
+	}
+
+	return inexistence, idSet.ToSlice(), nil
+}
+
+func TargetGetTags(ctx *ctx.Context, idents []string, ignoreHostTag bool, bgLabelKey string) (
+	[]string, error) {
 	session := DB(ctx).Model(new(Target))
 
 	var arr []*Target
@@ -446,7 +520,22 @@ func TargetGetTags(ctx *ctx.Context, idents []string, ignoreHostTag bool) ([]str
 		ret = append(ret, key)
 	}
 
-	sort.Strings(ret)
+	if bgLabelKey != "" {
+		sort.Slice(ret, func(i, j int) bool {
+			if strings.HasPrefix(ret[i], bgLabelKey) && strings.HasPrefix(ret[j], bgLabelKey) {
+				return ret[i] < ret[j]
+			}
+			if strings.HasPrefix(ret[i], bgLabelKey) {
+				return true
+			}
+			if strings.HasPrefix(ret[j], bgLabelKey) {
+				return false
+			}
+			return ret[i] < ret[j]
+		})
+	} else {
+		sort.Strings(ret)
+	}
 
 	return ret, err
 }
@@ -563,19 +652,34 @@ func (m *Target) UpdateFieldsMap(ctx *ctx.Context, fields map[string]interface{}
 	return DB(ctx).Model(m).Updates(fields).Error
 }
 
-func MigrateBg(ctx *ctx.Context, bgLabelKey string) {
-	// 1. 判断是否已经完成迁移
+// 1. 是否可以进行 busi_group 迁移
+func CanMigrateBg(ctx *ctx.Context) bool {
+	// 1.1 检查 target 表是否为空
+	var cnt int64
+	if err := DB(ctx).Model(&Target{}).Count(&cnt).Error; err != nil {
+		log.Println("failed to get target table count, err:", err)
+		return false
+	}
+	if cnt == 0 {
+		log.Println("target table is empty, skip migration.")
+		return false
+	}
+
+	// 1.2 判断是否已经完成迁移
 	var maxGroupId int64
 	if err := DB(ctx).Model(&Target{}).Select("MAX(group_id)").Scan(&maxGroupId).Error; err != nil {
 		log.Println("failed to get max group_id from target table, err:", err)
-		return
+		return false
 	}
 
 	if maxGroupId == 0 {
-		log.Println("migration bgid has been completed.")
-		return
+		return false
 	}
 
+	return true
+}
+
+func MigrateBg(ctx *ctx.Context, bgLabelKey string) {
 	err := DoMigrateBg(ctx, bgLabelKey)
 	if err != nil {
 		log.Println("failed to migrate bgid, err:", err)
@@ -608,27 +712,43 @@ func DoMigrateBg(ctx *ctx.Context, bgLabelKey string) error {
 		if t.GroupId == 0 {
 			continue
 		}
-		err := DB(ctx).Transaction(func(tx *gorm.DB) error {
-			// 4.1 将 group_id 迁移至关联表
-			if err := TargetBindBgids(ctx, []string{t.Ident}, []int64{t.GroupId}); err != nil {
-				return err
-			}
-			if err := TargetUpdateBgid(ctx, []string{t.Ident}, 0, false); err != nil {
-				return err
-			}
-
-			// 4.2 判断该机器是否需要新增 tag
-			if bg, ok := bgById[t.GroupId]; !ok || bg.LabelEnable == 0 ||
-				strings.Contains(t.Tags, bgLabelKey+"=") {
-				return nil
-			} else {
-				return t.AddTags(ctx, []string{bgLabelKey + "=" + bg.LabelValue})
-			}
-		})
-		if err != nil {
-			log.Printf("failed to migrate %v bg, err: %v\n", t.Ident, err)
+		// 4.1 将 group_id 迁移至关联表
+		if err := TargetBindBgids(ctx, []string{t.Ident}, []int64{t.GroupId}, nil); err != nil {
+			logger.Errorf("migrate failed to migrate bgid %v to %v, err: %v", t.GroupId, t.Ident, err)
 			continue
+		}
+
+		// 4.1.1 将 group_id 迁移至关联表
+		if err := TargetUpdateBgid(ctx, []string{t.Ident}, 0, false); err != nil {
+			logger.Errorf("migrate failed to migrate ident group id to 0, ident: %v, err: %v", t.Ident, err)
+			continue
+		}
+
+		// 4.2 判断该机器是否需要新增 tag
+		if bg, ok := bgById[t.GroupId]; !ok || bg.LabelEnable == 0 ||
+			strings.Contains(t.Tags, bgLabelKey+"=") {
+			logger.Infof("migrate ident %v has no bg label tag, skip", t.Ident)
+			continue
+		} else {
+			err := t.AddTags(ctx, []string{" " + bgLabelKey + "=" + bg.LabelValue})
+			if err != nil {
+				logger.Errorf("migrate failed to add bg label tag %v to %v, err: %v", bgLabelKey+"="+bg.LabelValue, t.Ident, err)
+				continue
+			}
+			logger.Infof("migrate add bg label tag %v to %v", bgLabelKey+"="+bg.LabelValue, t.Ident)
 		}
 	}
 	return nil
+}
+
+// 返回不存在的 idents
+func TargetNoExistIdents(ctx *ctx.Context, idents []string) ([]string, error) {
+	var existingIdents []string
+	err := ctx.DB.Table("target").Where("ident in ?", idents).Pluck("ident", &existingIdents).Error
+	if err != nil {
+		return nil, err
+	}
+
+	notExistIdents := slice.SubString(idents, existingIdents)
+	return notExistIdents, nil
 }

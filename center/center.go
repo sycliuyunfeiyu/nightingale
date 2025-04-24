@@ -3,8 +3,12 @@ package center
 import (
 	"context"
 	"fmt"
+
+	"github.com/ccfos/nightingale/v6/dscache"
+
 	"github.com/ccfos/nightingale/v6/alert"
 	"github.com/ccfos/nightingale/v6/alert/astats"
+	"github.com/ccfos/nightingale/v6/alert/dispatch"
 	"github.com/ccfos/nightingale/v6/alert/process"
 	alertrt "github.com/ccfos/nightingale/v6/alert/router"
 	"github.com/ccfos/nightingale/v6/center/cconf"
@@ -25,14 +29,13 @@ import (
 	"github.com/ccfos/nightingale/v6/pkg/httpx"
 	"github.com/ccfos/nightingale/v6/pkg/i18nx"
 	"github.com/ccfos/nightingale/v6/pkg/logx"
+	"github.com/ccfos/nightingale/v6/pkg/macros"
 	"github.com/ccfos/nightingale/v6/pkg/version"
 	"github.com/ccfos/nightingale/v6/prom"
 	"github.com/ccfos/nightingale/v6/pushgw/idents"
 	pushgwrt "github.com/ccfos/nightingale/v6/pushgw/router"
 	"github.com/ccfos/nightingale/v6/pushgw/writer"
 	"github.com/ccfos/nightingale/v6/storage"
-	"github.com/ccfos/nightingale/v6/tdengine"
-
 	"github.com/flashcatcloud/ibex/src/cmd/ibex"
 )
 
@@ -46,6 +49,10 @@ func Initialize(configDir string, cryptoKey string) (func(), error) {
 	cconf.LoadOpsYaml(configDir, config.Center.OpsYamlFile)
 
 	cconf.MergeOperationConf()
+
+	if config.Alert.Heartbeat.EngineName == "" {
+		config.Alert.Heartbeat.EngineName = "default"
+	}
 
 	logxClean, err := logx.Init(config.Log)
 	if err != nil {
@@ -62,7 +69,7 @@ func Initialize(configDir string, cryptoKey string) (func(), error) {
 	}
 	ctx := ctx.NewContext(context.Background(), db, true)
 	migrate.Migrate(db)
-	models.InitRoot(ctx)
+	isRootInit := models.InitRoot(ctx)
 
 	config.HTTP.JWTAuth.SigningKey = models.InitJWTSigningKey(ctx)
 
@@ -84,6 +91,10 @@ func Initialize(configDir string, cryptoKey string) (func(), error) {
 	syncStats := memsto.NewSyncStats()
 	alertStats := astats.NewSyncStats()
 
+	if config.Center.MigrateBusiGroupLabel || models.CanMigrateBg(ctx) {
+		models.MigrateBg(ctx, config.Pushgw.BusiGroupLabelKey)
+	}
+
 	configCache := memsto.NewConfigCache(ctx, syncStats, config.HTTP.RSA.RSAPrivateKey, config.HTTP.RSA.RSAPassWord)
 	busiGroupCache := memsto.NewBusiGroupCache(ctx, syncStats)
 	targetCache := memsto.NewTargetCache(ctx, syncStats, redis)
@@ -94,13 +105,22 @@ func Initialize(configDir string, cryptoKey string) (func(), error) {
 	userCache := memsto.NewUserCache(ctx, syncStats)
 	userGroupCache := memsto.NewUserGroupCache(ctx, syncStats)
 	taskTplCache := memsto.NewTaskTplCache(ctx)
+	configCvalCache := memsto.NewCvalCache(ctx, syncStats)
+	notifyRuleCache := memsto.NewNotifyRuleCache(ctx, syncStats)
+	notifyChannelCache := memsto.NewNotifyChannelCache(ctx, syncStats)
+	messageTemplateCache := memsto.NewMessageTemplateCache(ctx, syncStats)
+	userTokenCache := memsto.NewUserTokenCache(ctx, syncStats)
 
 	sso := sso.Init(config.Center, ctx, configCache)
 	promClients := prom.NewPromClient(ctx)
-	tdengineClients := tdengine.NewTdengineClient(ctx, config.Alert.Heartbeat)
+
+	dispatch.InitRegisterQueryFunc(promClients)
 
 	externalProcessors := process.NewExternalProcessors()
-	alert.Start(config.Alert, config.Pushgw, syncStats, alertStats, externalProcessors, targetCache, busiGroupCache, alertMuteCache, alertRuleCache, notifyConfigCache, taskTplCache, dsCache, ctx, promClients, tdengineClients, userCache, userGroupCache)
+
+	macros.RegisterMacro(macros.MacroInVain)
+	dscache.Init(ctx, false)
+	alert.Start(config.Alert, config.Pushgw, syncStats, alertStats, externalProcessors, targetCache, busiGroupCache, alertMuteCache, alertRuleCache, notifyConfigCache, taskTplCache, dsCache, ctx, promClients, userCache, userGroupCache, notifyRuleCache, notifyChannelCache, messageTemplateCache)
 
 	writers := writer.NewWriters(config.Pushgw)
 
@@ -110,13 +130,11 @@ func Initialize(configDir string, cryptoKey string) (func(), error) {
 
 	alertrtRouter := alertrt.New(config.HTTP, config.Alert, alertMuteCache, targetCache, busiGroupCache, alertStats, ctx, externalProcessors)
 	centerRouter := centerrt.New(config.HTTP, config.Center, config.Alert, config.Ibex,
-		cconf.Operations, dsCache, notifyConfigCache, promClients, tdengineClients,
-		redis, sso, ctx, metas, idents, targetCache, userCache, userGroupCache)
+		cconf.Operations, dsCache, notifyConfigCache, promClients,
+		redis, sso, ctx, metas, idents, targetCache, userCache, userGroupCache, userTokenCache)
 	pushgwRouter := pushgwrt.New(config.HTTP, config.Pushgw, config.Alert, targetCache, busiGroupCache, idents, metas, writers, ctx)
 
-	go models.MigrateBg(ctx, pushgwRouter.Pushgw.BusiGroupLabelKey)
-
-	r := httpx.GinEngine(config.Global.RunMode, config.HTTP)
+	r := httpx.GinEngine(config.Global.RunMode, config.HTTP, configCvalCache.PrintBodyPaths, configCvalCache.PrintAccessLog)
 
 	centerRouter.Config(r)
 	alertrtRouter.Config(r)
@@ -129,6 +147,11 @@ func Initialize(configDir string, cryptoKey string) (func(), error) {
 	}
 
 	httpClean := httpx.Init(config.HTTP, r)
+
+	fmt.Printf("please view n9e at  http://%v:%v\n", config.Alert.Heartbeat.IP, config.HTTP.Port)
+	if isRootInit {
+		fmt.Println("username/password: root/root.2020")
+	}
 
 	return func() {
 		logxClean()

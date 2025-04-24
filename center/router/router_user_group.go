@@ -6,11 +6,11 @@ import (
 
 	"github.com/ccfos/nightingale/v6/models"
 	"github.com/ccfos/nightingale/v6/pkg/flashduty"
+	"github.com/ccfos/nightingale/v6/pkg/strx"
 
 	"github.com/gin-gonic/gin"
 	"github.com/toolkits/pkg/ginx"
 	"github.com/toolkits/pkg/logger"
-	"github.com/toolkits/pkg/str"
 )
 
 func (rt *Router) checkBusiGroupPerm(c *gin.Context) {
@@ -32,7 +32,7 @@ func (rt *Router) userGroupGets(c *gin.Context) {
 }
 
 func (rt *Router) userGroupGetsByService(c *gin.Context) {
-	ids := str.IdsInt64(ginx.QueryStr(c, "ids", ""))
+	ids := strx.IdsInt64ForAPI(ginx.QueryStr(c, "ids", ""))
 
 	if len(ids) == 0 {
 		lst, err := models.UserGroupGetAll(rt.Ctx)
@@ -111,7 +111,6 @@ func (rt *Router) userGroupPut(c *gin.Context) {
 
 	me := c.MustGet("user").(*models.User)
 	ug := c.MustGet("user_group").(*models.UserGroup)
-	oldUGName := ug.Name
 
 	if ug.Name != f.Name {
 		// name changed, check duplication
@@ -130,7 +129,7 @@ func (rt *Router) userGroupPut(c *gin.Context) {
 	if f.IsSyncToFlashDuty || flashduty.NeedSyncTeam(rt.Ctx) {
 		ugs, err := flashduty.NewUserGroupSyncer(rt.Ctx, ug)
 		ginx.Dangerous(err)
-		err = ugs.SyncUGPut(oldUGName)
+		err = ugs.SyncUGPut()
 		ginx.Dangerous(err)
 	}
 	ginx.NewRender(c).Message(ug.Update(rt.Ctx, "Name", "Note", "UpdateAt", "UpdateBy"))
@@ -159,8 +158,11 @@ func (rt *Router) userGroupDel(c *gin.Context) {
 	if isSyncToFlashDuty || flashduty.NeedSyncTeam(rt.Ctx) {
 		ugs, err := flashduty.NewUserGroupSyncer(rt.Ctx, ug)
 		ginx.Dangerous(err)
-		err = ugs.SyncUGDel(ug.Name)
-		ginx.Dangerous(err)
+		err = ugs.SyncUGDel()
+		// 如果team 在 duty 被引用或者已经删除，会报错，可以忽略报错
+		if err != nil {
+			logger.Warningf("failed to sync user group %s to flashduty's team: %v", ug.Name, err)
+		}
 	}
 	ginx.NewRender(c).Message(ug.Del(rt.Ctx))
 

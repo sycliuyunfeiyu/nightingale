@@ -15,8 +15,8 @@ CREATE TABLE `users` (
     `roles` varchar(255) not null comment 'Admin | Standard | Guest, split by space',
     `contacts` varchar(1024) comment 'json e.g. {wecom:xx, dingtalk_robot_token:yy}',
     `maintainer` tinyint(1) not null default 0,
-    `belong` varchar(16) not null default '' comment 'belong',
-    `last_active_time` bigint not null default 0,
+    `belong` varchar(191) DEFAULT '' COMMENT 'belong',
+    `last_active_time` bigint DEFAULT 0 COMMENT 'last_active_time',
     `create_at` bigint not null default 0,
     `create_by` varchar(64) not null default '',
     `update_at` bigint not null default 0,
@@ -56,14 +56,14 @@ insert into user_group_member(group_id, user_id) values(1, 1);
 CREATE TABLE `configs` (
     `id` bigint unsigned not null auto_increment,
     `ckey` varchar(191) not null,
-    `cval` text not null,
-    `note` varchar(1024) not null default '',
-    `external` tinyint(1) not null default 0,
-    `encrypted` tinyint(1) not null default 0,
-    `create_at` bigint not null default 0,
-    `create_by` varchar(64) not null default '',
-    `update_at` bigint not null default 0,
-    `update_by` varchar(64) not null default '',
+    `note` varchar(1024) NOT NULL DEFAULT '' COMMENT 'note',
+    `cval` text COMMENT 'config value',
+    `external`  bigint DEFAULT 0 COMMENT '0\\:built-in 1\\:external',
+    `encrypted` bigint DEFAULT 0 COMMENT '0\\:plaintext 1\\:ciphertext',
+    `create_at` bigint DEFAULT 0 COMMENT 'create_at',
+    `create_by` varchar(64) NOT NULL DEFAULT '' COMMENT 'cerate_by',
+    `update_at` bigint DEFAULT 0 COMMENT 'update_at',
+    `update_by` varchar(64) NOT NULL DEFAULT '' COMMENT 'update_by',
     PRIMARY KEY (`id`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;
 
@@ -198,6 +198,7 @@ CREATE TABLE `board` (
     `create_by` varchar(64) not null default '',
     `update_at` bigint not null default 0,
     `update_by` varchar(64) not null default '',
+    `public_cate` bigint NOT NULL NOT NULL DEFAULT 0 COMMENT '0 anonymous 1 login 2 busi',
     PRIMARY KEY (`id`),
     UNIQUE KEY (`group_id`, `name`),
     KEY(`ident`)
@@ -249,7 +250,7 @@ CREATE TABLE `chart` (
 CREATE TABLE `chart_share` (
     `id` bigint unsigned not null auto_increment,
     `cluster` varchar(128) not null,
-    `datasource_id` bigint unsigned not null default 0,
+    `datasource_id` bigint NOT NULL NOT NULL DEFAULT 0 COMMENT 'datasource id',
     `configs` text,
     `create_at` bigint not null default 0,
     `create_by` varchar(64) not null default '',
@@ -289,11 +290,15 @@ CREATE TABLE `alert_rule` (
     `runbook_url` varchar(4096),
     `append_tags` varchar(255) not null default '' comment 'split by space: service=n9e mod=api',
     `annotations` text not null comment 'annotations',
-    `extra_config` text not null comment 'extra_config',
+    `extra_config` text,
+    `notify_rule_ids` varchar(1024) DEFAULT '',
+    `notify_version` int DEFAULT 0,
     `create_at` bigint not null default 0,
     `create_by` varchar(64) not null default '',
     `update_at` bigint not null default 0,
     `update_by` varchar(64) not null default '',
+    `cron_pattern` varchar(64),
+    `datasource_queries` text,
     PRIMARY KEY (`id`),
     KEY (`group_id`),
     KEY (`update_at`)
@@ -334,6 +339,7 @@ CREATE TABLE `alert_subscribe` (
     `datasource_ids` varchar(255) not null default '' comment 'datasource ids',
     `cluster` varchar(128) not null,
     `rule_id` bigint not null default 0,
+    `rule_ids` varchar(1024),
     `severities` varchar(32) not null default '',
     `tags` varchar(4096) not null default '' comment 'json,map,tagkey->regexp|value',
     `redefine_severity` tinyint(1) default 0 comment 'is redefine severity?',
@@ -341,13 +347,14 @@ CREATE TABLE `alert_subscribe` (
     `redefine_channels` tinyint(1) default 0 comment 'is redefine channels?',
     `new_channels` varchar(255) not null default '' comment 'split by space: sms voice email dingtalk wecom',
     `user_group_ids` varchar(250) not null comment 'split by space 1 34 5, notify cc to user_group_ids',
-    `busi_groups` VARCHAR(4096) NOT NULL DEFAULT '[]',
+    `busi_groups` varchar(4096),
     `note` VARCHAR(1024) DEFAULT '' COMMENT 'note',
-    `rule_ids` VARCHAR(1024) DEFAULT '' COMMENT 'rule_ids',
     `webhooks` text not null,
-    `extra_config` text not null comment 'extra_config',
+    `extra_config` text,
     `redefine_webhooks` tinyint(1) default 0,
     `for_duration` bigint not null default 0,
+    `notify_rule_ids` varchar(1024) DEFAULT '',
+    `notify_version` int DEFAULT 0,
     `create_at` bigint not null default 0,
     `create_by` varchar(64) not null default '',
     `update_at` bigint not null default 0,
@@ -363,14 +370,19 @@ CREATE TABLE `target` (
     `ident` varchar(191) not null comment 'target id',
     `note` varchar(255) not null default '' comment 'append to alert event as field',
     `tags` varchar(512) not null default '' comment 'append to series data as tags, split by space, append external space at suffix',
+    `host_tags` text COMMENT 'global labels set in conf file',
     `host_ip` varchar(15) default '' COMMENT 'IPv4 string',
     `agent_version` varchar(255) default '' COMMENT 'agent version',
-    `engine_name` varchar(255) default '' COMMENT 'engine_name',
+    `engine_name` varchar(255) DEFAULT '' COMMENT 'engine name',
     `os` VARCHAR(31) DEFAULT '' COMMENT 'os type',
     `update_at` bigint not null default 0,
     PRIMARY KEY (`id`),
     UNIQUE KEY (`ident`),
-    KEY (`group_id`)
+    KEY (`group_id`),
+    INDEX `idx_host_ip` (`host_ip`),
+    INDEX `idx_agent_version` (`agent_version`),
+    INDEX `idx_engine_name` (`engine_name`),
+    INDEX `idx_os` (`os`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;
 
 
@@ -400,11 +412,12 @@ CREATE TABLE `recording_rule` (
     `prom_eval_interval` int not null comment 'evaluate interval',
     `cron_pattern` varchar(255) default '' comment 'cron pattern',
     `append_tags` varchar(255) default '' comment 'split by space: service=n9e mod=api',
-    `query_configs` text not null comment 'query configs',
+    `query_configs` text NOT NULL,
     `create_at` bigint default '0',
     `create_by` varchar(64) default '',
     `update_at` bigint default '0',
     `update_by` varchar(64) default '',
+    `datasource_queries` text,
     PRIMARY KEY (`id`),
     KEY `group_id` (`group_id`),
     KEY `update_at` (`update_at`)
@@ -501,7 +514,7 @@ CREATE TABLE `alert_his_event` (
     `annotations` text not null comment 'annotations',
     `rule_config` text not null comment 'annotations',
     PRIMARY KEY (`id`),
-    KEY (`last_eval_time`),
+    INDEX `idx_last_eval_time` (`last_eval_time`),
     KEY (`hash`),
     KEY (`rule_id`),
     KEY (`trigger_time`, `group_id`)
@@ -514,21 +527,22 @@ CREATE TABLE `board_busigroup` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE `builtin_components` (
-  `id` bigint(20) NOT NULL AUTO_INCREMENT COMMENT '''unique identifier''',
-  `ident` varchar(191) NOT NULL COMMENT '''identifier of component''',
-  `logo` varchar(191) NOT NULL COMMENT '''logo of component''',
+  `id` bigint UNSIGNED NOT NULL AUTO_INCREMENT COMMENT 'unique identifier',
+  `ident` varchar(191) NOT NULL,
+  `logo` mediumtext COMMENT '''logo of component''',
   `readme` text NOT NULL COMMENT '''readme of component''',
-  `created_at` bigint(20) NOT NULL DEFAULT 0 COMMENT '''create time''',
+  `created_at` bigint NOT NULL DEFAULT 0 COMMENT '''create time''',
   `created_by` varchar(191) NOT NULL DEFAULT '' COMMENT '''creator''',
-  `updated_at` bigint(20) NOT NULL DEFAULT 0 COMMENT '''update time''',
+  `updated_at` bigint NOT NULL DEFAULT 0 COMMENT '''update time''',
   `updated_by` varchar(191) NOT NULL DEFAULT '' COMMENT '''updater''',
+  `disabled` int NOT NULL DEFAULT 0 COMMENT '''is disabled or not''',
   PRIMARY KEY (`id`),
-  KEY `idx_ident` (`ident`)
+  UNIQUE KEY `idx_ident` (`ident`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE `builtin_payloads` (
   `id` bigint(20) NOT NULL AUTO_INCREMENT COMMENT '''unique identifier''',
-  `component_id` bigint(20) NOT NULL DEFAULT 0 COMMENT 'component_id',
+  `component_id` bigint NOT NULL DEFAULT 0 COMMENT '''component_id of payload''',
   `uuid` bigint(20) NOT NULL COMMENT '''uuid of payload''',
   `type` varchar(191) NOT NULL COMMENT '''type of payload''',
   `component` varchar(191) NOT NULL COMMENT '''component of payload''',
@@ -550,13 +564,14 @@ CREATE TABLE `builtin_payloads` (
 
 CREATE TABLE notification_record (
     `id` BIGINT PRIMARY KEY AUTO_INCREMENT,
-    `event_id` BIGINT NOT NULL,
-    `sub_id` BIGINT NOT NULL,
-    `channel` VARCHAR(255) NOT NULL,
-    `status` TINYINT NOT NULL DEFAULT 0,
-    `target` VARCHAR(1024) NOT NULL,
-    `details` VARCHAR(2048),
-    `created_at` BIGINT NOT NULL,
+    `notify_rule_id` BIGINT NOT NULL DEFAULT 0,
+    `event_id`  bigint NOT NULL COMMENT 'event history id',
+    `sub_id`  bigint COMMENT 'subscribed rule id',
+    `channel` varchar(255) NOT NULL COMMENT 'notification channel name',
+    `status` bigint COMMENT 'notification status',
+    `target` varchar(1024) NOT NULL COMMENT 'notification target',
+    `details` varchar(2048) DEFAULT '' COMMENT 'notification other info',
+    `created_at` bigint NOT NULL COMMENT 'create time',
     INDEX idx_evt (event_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -611,7 +626,7 @@ CREATE TABLE `task_record`
     PRIMARY KEY (`id`),
     KEY (`create_at`, `group_id`),
     KEY (`create_by`),
-    KEY (`event_id`)
+    INDEX `idx_event_id` (`event_id`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;
 
 CREATE TABLE `alerting_engines`
@@ -621,13 +636,16 @@ CREATE TABLE `alerting_engines`
     `datasource_id` bigint not null default 0 comment 'datasource id',
     `engine_cluster` varchar(128) not null default '' comment 'n9e-alert cluster',
     `clock` bigint not null,
-    PRIMARY KEY (`id`)
+    PRIMARY KEY (`id`),
+    INDEX `idx_inst` (`instance`),
+    INDEX `idx_clock` (`clock`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;
 
 CREATE TABLE `datasource`
 (
     `id` int unsigned NOT NULL AUTO_INCREMENT,
     `name` varchar(191) not null default '',
+    `identifier` varchar(255) not null default '',
     `description` varchar(255) not null default '',
     `category` varchar(255) not null default '',
     `plugin_id` int unsigned not null default 0,
@@ -638,7 +656,7 @@ CREATE TABLE `datasource`
     `status` varchar(255) not null default '',
     `http` varchar(4096) not null default '',
     `auth` varchar(8192) not null default '',
-    `is_default` tinyint not null default 0,
+    `is_default` boolean COMMENT 'is default datasource',
     `created_at` bigint not null default 0,
     `created_by` varchar(64) not null default '',
     `updated_at` bigint not null default 0,
@@ -659,10 +677,10 @@ CREATE TABLE `notify_tpl` (
     `channel` varchar(32) not null,
     `name` varchar(255) not null,
     `content` text not null,
-    `create_at` bigint not null default 0,
-    `create_by` varchar(64) not null default '',
-    `update_at` bigint not null default 0,
-    `update_by` varchar(64) not null default '',
+    `create_at` bigint DEFAULT 0 COMMENT 'create_at',
+    `create_by` varchar(64) DEFAULT '' COMMENT 'cerate_by',
+    `update_at` bigint DEFAULT 0 COMMENT 'update_at',
+    `update_by` varchar(64) DEFAULT '' COMMENT 'update_by',
     PRIMARY KEY (`id`),
     UNIQUE KEY (`channel`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;
@@ -671,7 +689,7 @@ CREATE TABLE `sso_config` (
     `id` bigint unsigned not null auto_increment,
     `name` varchar(191) not null,
     `content` text not null,
-    `update_at` bigint not null default 0,
+    `update_at` bigint DEFAULT 0 COMMENT 'update_at',
     PRIMARY KEY (`id`),
     UNIQUE KEY (`name`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;
@@ -683,6 +701,8 @@ CREATE TABLE `es_index_pattern` (
     `time_field` varchar(128) not null default '@timestamp',
     `allow_hide_system_indices` tinyint(1) not null default 0,
     `fields_format` varchar(4096) not null default '',
+    `cross_cluster_enabled` int not null default 0,
+    `note` varchar(1024) not null default '',
     `create_at` bigint default '0',
     `create_by` varchar(64) default '',
     `update_at` bigint default '0',
@@ -691,48 +711,136 @@ CREATE TABLE `es_index_pattern` (
     UNIQUE KEY (`datasource_id`, `name`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;
 
+
 CREATE TABLE `builtin_metrics` (
     `id` bigint unsigned NOT NULL AUTO_INCREMENT COMMENT 'unique identifier',
-    `collector` varchar(191) NOT NULL COMMENT 'type of collector',
-    `typ` varchar(191) NOT NULL COMMENT 'type of metric',
-    `name` varchar(191) NOT NULL COMMENT 'name of metric',
-    `unit` varchar(191) NOT NULL COMMENT 'unit of metric',
-    `lang` varchar(191) NOT NULL DEFAULT '' COMMENT 'language of metric',
-    `note` varchar(4096) NOT NULL COMMENT 'description of metric in Chinese',
-    `expression` varchar(4096) NOT NULL COMMENT 'expression of metric',
-    `created_at` bigint NOT NULL DEFAULT 0 COMMENT 'create time',
-    `created_by` varchar(191) NOT NULL DEFAULT '' COMMENT 'creator',
-    `updated_at` bigint NOT NULL DEFAULT 0 COMMENT 'update time',
-    `updated_by` varchar(191) NOT NULL DEFAULT '' COMMENT 'updater',
+    `collector` varchar(191) NOT NULL COMMENT '''type of collector''',
+    `typ` varchar(191) NOT NULL COMMENT '''type of metric''',
+    `name` varchar(191) NOT NULL COMMENT '''name of metric''',
+    `unit` varchar(191) NOT NULL COMMENT '''unit of metric''',
+    `lang` varchar(191) NOT NULL DEFAULT 'zh' COMMENT '''language''',
+    `note` varchar(4096) NOT NULL COMMENT '''description of metric''',
+    `expression` varchar(4096) NOT NULL COMMENT '''expression of metric''',
+    `created_at` bigint NOT NULL DEFAULT 0 COMMENT '''create time''',
+    `created_by` varchar(191) NOT NULL DEFAULT '' COMMENT '''creator''',
+    `updated_at` bigint NOT NULL DEFAULT 0 COMMENT '''update time''',
+    `updated_by` varchar(191) NOT NULL DEFAULT '' COMMENT '''updater''',
+    `uuid` bigint NOT NULL DEFAULT 0 COMMENT '''uuid''',
     PRIMARY KEY (`id`),
     UNIQUE KEY `idx_collector_typ_name` (`lang`,`collector`, `typ`, `name`),
+    INDEX `idx_uuid` (`uuid`),
     INDEX `idx_collector` (`collector`),
     INDEX `idx_typ` (`typ`),
-    INDEX `idx_name` (`name`),
+    INDEX `idx_builtinmetric_name` (`name` ASC),
     INDEX `idx_lang` (`lang`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE `metric_filter` (
   `id` bigint NOT NULL AUTO_INCREMENT COMMENT 'unique identifier',
-  `name` varchar(191) NOT NULL COMMENT 'name of metric filter',
-  `configs` varchar(4096) NOT NULL COMMENT 'configuration of metric filter',
+  `name`  varchar(191) NOT NULL COMMENT '''name of metric filter''',
+  `configs`  varchar(4096) NOT NULL COMMENT '''configuration of metric filter''',
   `groups_perm` text,
-  `create_at` bigint NOT NULL DEFAULT '0' COMMENT 'create time',
-  `create_by` varchar(191) NOT NULL DEFAULT '' COMMENT 'creator',
-  `update_at` bigint NOT NULL DEFAULT '0' COMMENT 'update time',
-  `update_by` varchar(191) NOT NULL DEFAULT '' COMMENT 'updater',
+  `create_at` bigint NOT NULL DEFAULT 0 COMMENT '''create time''',
+  `create_by` varchar(191) NOT NULL DEFAULT '' COMMENT '''creator''',
+  `update_at` bigint NOT NULL DEFAULT 0 COMMENT '''update time''',
+  `update_by` varchar(191) NOT NULL DEFAULT '' COMMENT '''updater''',
   PRIMARY KEY (`id`),
-  KEY `idx_name` (`name`)
+  INDEX `idx_metricfilter_name` (`name` ASC)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE `target_busi_group` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `target_ident` varchar(191) NOT NULL,
+  `group_id` bigint NOT NULL,
+  `update_at` bigint NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `idx_target_group` (`target_ident`,`group_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+
+CREATE TABLE `dash_annotation` (
+    `id` bigint unsigned not null auto_increment,
+    `dashboard_id` bigint not null comment 'dashboard id',
+    `panel_id` varchar(191) not null comment 'panel id',
+    `tags` text comment 'tags array json string',
+    `description` text comment 'annotation description',
+    `config` text comment 'annotation config',
+    `time_start` bigint not null default 0 comment 'start timestamp',
+    `time_end` bigint not null default 0 comment 'end timestamp',
+    `create_at` bigint not null default 0 comment 'create time',
+    `create_by` varchar(64) not null default '' comment 'creator',
+    `update_at` bigint not null default 0 comment 'update time',
+    `update_by` varchar(64) not null default '' comment 'updater',
+    PRIMARY KEY (`id`),
+    KEY `idx_dashboard_id` (`dashboard_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE `user_token` (
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `username` varchar(255) NOT NULL DEFAULT '',
+    `token_name` varchar(255) NOT NULL DEFAULT '',
+    `token` varchar(255) NOT NULL DEFAULT '',
+    `create_at` bigint NOT NULL DEFAULT 0,
+    `last_used` bigint NOT NULL DEFAULT 0,
+    PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+
+CREATE TABLE `notify_rule` (
+    `id` bigint unsigned not null auto_increment,
+    `name` varchar(255) not null,
+    `description` text,
+    `enable` tinyint(1) not null default 0,
+    `user_group_ids` varchar(255) not null default '',
+    `notify_configs` text,
+    `create_at` bigint not null default 0,
+    `create_by` varchar(64) not null default '',
+    `update_at` bigint not null default 0,
+    `update_by` varchar(64) not null default '',
+    PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;
+
+CREATE TABLE `notify_channel` (
+    `id` bigint unsigned not null auto_increment,
+    `name` varchar(255) not null,
+    `ident` varchar(255) not null,
+    `description` text, 
+    `enable` tinyint(1) not null default 0,
+    `param_config` text,
+    `request_type` varchar(50) not null,
+    `request_config` text,
+    `weight` int not null default 0,
+    `create_at` bigint not null default 0,
+    `create_by` varchar(64) not null default '',
+    `update_at` bigint not null default 0,
+    `update_by` varchar(64) not null default '',
+    PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;
+
+CREATE TABLE `message_template` (
+    `id` bigint unsigned not null auto_increment,
+    `name` varchar(64) not null,
+    `ident` varchar(64) not null,
+    `content` text,
+    `user_group_ids` varchar(64),
+    `notify_channel_ident` varchar(64) not null default '',
+    `private` int not null default 0,
+    `weight` int not null default 0,
+    `create_at` bigint not null default 0,
+    `create_by` varchar(64) not null default '',
+    `update_at` bigint not null default 0,
+    `update_by` varchar(64) not null default '',
+    PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;
 
 CREATE TABLE `task_meta`
 (
     `id`          bigint unsigned NOT NULL AUTO_INCREMENT,
     `title`       varchar(255)    not null default '',
     `account`     varchar(64)     not null,
-    `batch`       int unsigned    not null default 0,
-    `tolerance`   int unsigned    not null default 0,
-    `timeout`     int unsigned    not null default 0,
+    `batch`       bigint          not null default 0,
+    `tolerance`   bigint          not null default 0,
+    `timeout`     bigint    not null default 0,
     `pause`       varchar(255)    not null default '',
     `script`      text            not null,
     `args`        varchar(512)    not null default '',
@@ -740,8 +848,8 @@ CREATE TABLE `task_meta`
     `creator`     varchar(64)     not null default '',
     `created`     timestamp       not null default CURRENT_TIMESTAMP,
     PRIMARY KEY (`id`),
-    KEY (`creator`),
-    KEY (`created`)
+    KEY `idx_task_meta_creator` (`creator`),
+    KEY `idx_task_meta_created` (`created`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
 
@@ -765,9 +873,9 @@ CREATE TABLE `task_scheduler`
 
 CREATE TABLE `task_scheduler_health`
 (
-    `scheduler` varchar(128) not null,
-    `clock`     bigint       not null,
-    UNIQUE KEY (`scheduler`),
+    `scheduler` varchar(128) NOT NULL,
+    `clock`     bigint not null,
+    UNIQUE KEY `idx_task_scheduler_health_scheduler` (`scheduler`),
     KEY (`clock`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -778,8 +886,8 @@ CREATE TABLE `task_host_doing`
     `host`   varchar(128)    not null,
     `clock`  bigint          not null default 0,
     `action` varchar(16)     not null,
-    KEY (`id`),
-    KEY (`host`)
+    KEY `idx_task_host_doing_id` (`id`),
+   KEY `idx_task_host_doing_host` (`host`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
 
@@ -791,7 +899,7 @@ CREATE TABLE task_host_0
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -804,7 +912,7 @@ CREATE TABLE task_host_1
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -817,7 +925,7 @@ CREATE TABLE task_host_2
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -830,7 +938,7 @@ CREATE TABLE task_host_3
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -843,7 +951,7 @@ CREATE TABLE task_host_4
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -856,7 +964,7 @@ CREATE TABLE task_host_5
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -869,7 +977,7 @@ CREATE TABLE task_host_6
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -882,7 +990,7 @@ CREATE TABLE task_host_7
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -895,7 +1003,7 @@ CREATE TABLE task_host_8
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -908,7 +1016,7 @@ CREATE TABLE task_host_9
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -921,7 +1029,7 @@ CREATE TABLE task_host_10
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -934,7 +1042,7 @@ CREATE TABLE task_host_11
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -947,7 +1055,7 @@ CREATE TABLE task_host_12
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -960,7 +1068,7 @@ CREATE TABLE task_host_13
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -973,7 +1081,7 @@ CREATE TABLE task_host_14
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -986,7 +1094,7 @@ CREATE TABLE task_host_15
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -999,7 +1107,7 @@ CREATE TABLE task_host_16
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1012,7 +1120,7 @@ CREATE TABLE task_host_17
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1025,7 +1133,7 @@ CREATE TABLE task_host_18
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1038,7 +1146,7 @@ CREATE TABLE task_host_19
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1051,7 +1159,7 @@ CREATE TABLE task_host_20
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1064,7 +1172,7 @@ CREATE TABLE task_host_21
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1077,7 +1185,7 @@ CREATE TABLE task_host_22
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1090,7 +1198,7 @@ CREATE TABLE task_host_23
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1103,7 +1211,7 @@ CREATE TABLE task_host_24
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1116,7 +1224,7 @@ CREATE TABLE task_host_25
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1129,7 +1237,7 @@ CREATE TABLE task_host_26
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1142,7 +1250,7 @@ CREATE TABLE task_host_27
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1155,7 +1263,7 @@ CREATE TABLE task_host_28
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1168,7 +1276,7 @@ CREATE TABLE task_host_29
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1181,7 +1289,7 @@ CREATE TABLE task_host_30
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1194,7 +1302,7 @@ CREATE TABLE task_host_31
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1207,7 +1315,7 @@ CREATE TABLE task_host_32
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1220,7 +1328,7 @@ CREATE TABLE task_host_33
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1233,7 +1341,7 @@ CREATE TABLE task_host_34
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1246,7 +1354,7 @@ CREATE TABLE task_host_35
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1259,7 +1367,7 @@ CREATE TABLE task_host_36
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1272,7 +1380,7 @@ CREATE TABLE task_host_37
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1285,7 +1393,7 @@ CREATE TABLE task_host_38
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1298,7 +1406,7 @@ CREATE TABLE task_host_39
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1311,7 +1419,7 @@ CREATE TABLE task_host_40
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1324,7 +1432,7 @@ CREATE TABLE task_host_41
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1337,7 +1445,7 @@ CREATE TABLE task_host_42
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1350,7 +1458,7 @@ CREATE TABLE task_host_43
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1363,7 +1471,7 @@ CREATE TABLE task_host_44
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1376,7 +1484,7 @@ CREATE TABLE task_host_45
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1389,7 +1497,7 @@ CREATE TABLE task_host_46
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1402,7 +1510,7 @@ CREATE TABLE task_host_47
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1415,7 +1523,7 @@ CREATE TABLE task_host_48
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1428,7 +1536,7 @@ CREATE TABLE task_host_49
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1441,7 +1549,7 @@ CREATE TABLE task_host_50
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1454,7 +1562,7 @@ CREATE TABLE task_host_51
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1467,7 +1575,7 @@ CREATE TABLE task_host_52
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1480,7 +1588,7 @@ CREATE TABLE task_host_53
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1493,7 +1601,7 @@ CREATE TABLE task_host_54
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1506,7 +1614,7 @@ CREATE TABLE task_host_55
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1519,7 +1627,7 @@ CREATE TABLE task_host_56
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1532,7 +1640,7 @@ CREATE TABLE task_host_57
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1545,7 +1653,7 @@ CREATE TABLE task_host_58
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1558,7 +1666,7 @@ CREATE TABLE task_host_59
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1571,7 +1679,7 @@ CREATE TABLE task_host_60
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1584,7 +1692,7 @@ CREATE TABLE task_host_61
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1597,7 +1705,7 @@ CREATE TABLE task_host_62
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1610,7 +1718,7 @@ CREATE TABLE task_host_63
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1623,7 +1731,7 @@ CREATE TABLE task_host_64
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1636,7 +1744,7 @@ CREATE TABLE task_host_65
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1649,7 +1757,7 @@ CREATE TABLE task_host_66
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1662,7 +1770,7 @@ CREATE TABLE task_host_67
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1675,7 +1783,7 @@ CREATE TABLE task_host_68
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1688,7 +1796,7 @@ CREATE TABLE task_host_69
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1701,7 +1809,7 @@ CREATE TABLE task_host_70
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1714,7 +1822,7 @@ CREATE TABLE task_host_71
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1727,7 +1835,7 @@ CREATE TABLE task_host_72
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1740,7 +1848,7 @@ CREATE TABLE task_host_73
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1753,7 +1861,7 @@ CREATE TABLE task_host_74
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1766,7 +1874,7 @@ CREATE TABLE task_host_75
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1779,7 +1887,7 @@ CREATE TABLE task_host_76
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1792,7 +1900,7 @@ CREATE TABLE task_host_77
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1805,7 +1913,7 @@ CREATE TABLE task_host_78
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1818,7 +1926,7 @@ CREATE TABLE task_host_79
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1831,7 +1939,7 @@ CREATE TABLE task_host_80
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1844,7 +1952,7 @@ CREATE TABLE task_host_81
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1857,7 +1965,7 @@ CREATE TABLE task_host_82
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1870,7 +1978,7 @@ CREATE TABLE task_host_83
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1883,7 +1991,7 @@ CREATE TABLE task_host_84
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1896,7 +2004,7 @@ CREATE TABLE task_host_85
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1909,7 +2017,7 @@ CREATE TABLE task_host_86
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1922,7 +2030,7 @@ CREATE TABLE task_host_87
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1935,7 +2043,7 @@ CREATE TABLE task_host_88
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1948,7 +2056,7 @@ CREATE TABLE task_host_89
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1961,7 +2069,7 @@ CREATE TABLE task_host_90
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1974,7 +2082,7 @@ CREATE TABLE task_host_91
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -1987,7 +2095,7 @@ CREATE TABLE task_host_92
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -2000,7 +2108,7 @@ CREATE TABLE task_host_93
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -2013,7 +2121,7 @@ CREATE TABLE task_host_94
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -2026,7 +2134,7 @@ CREATE TABLE task_host_95
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -2039,7 +2147,7 @@ CREATE TABLE task_host_96
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -2052,7 +2160,7 @@ CREATE TABLE task_host_97
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -2065,7 +2173,7 @@ CREATE TABLE task_host_98
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;
@@ -2078,7 +2186,7 @@ CREATE TABLE task_host_99
     `status` varchar(32)     not null,
     `stdout` text,
     `stderr` text,
-    UNIQUE KEY (`id`, `host`),
+    UNIQUE KEY `idx_id_host` (`id`, `host`),
     PRIMARY KEY (`ii`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4;

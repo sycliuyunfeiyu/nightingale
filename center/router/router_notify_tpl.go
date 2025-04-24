@@ -161,6 +161,10 @@ func (rt *Router) notifyTplPreview(c *gin.Context) {
 func (rt *Router) notifyTplAdd(c *gin.Context) {
 	var f models.NotifyTpl
 	ginx.BindJSON(c, &f)
+
+	user := c.MustGet("user").(*models.User)
+	f.CreateBy = user.Username
+
 	f.Channel = strings.TrimSpace(f.Channel)
 	ginx.Dangerous(templateValidate(f))
 
@@ -169,6 +173,8 @@ func (rt *Router) notifyTplAdd(c *gin.Context) {
 	if count != 0 {
 		ginx.Bomb(200, "Refuse to create duplicate channel(unique)")
 	}
+
+	f.CreateAt = time.Now().Unix()
 	ginx.NewRender(c).Message(f.Create(rt.Ctx))
 }
 
@@ -186,4 +192,14 @@ func (rt *Router) notifyTplDel(c *gin.Context) {
 	}
 
 	ginx.NewRender(c).Message(f.NotifyTplDelete(rt.Ctx, id))
+}
+
+func (rt *Router) messageTemplateGets(c *gin.Context) {
+	id := ginx.QueryInt64(c, "id", 0)
+	name := ginx.QueryStr(c, "name", "")
+	ident := ginx.QueryStr(c, "ident", "")
+
+	tpls, err := models.MessageTemplateGets(rt.Ctx, id, name, ident)
+
+	ginx.NewRender(c).Data(tpls, err)
 }

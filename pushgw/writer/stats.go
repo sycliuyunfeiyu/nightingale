@@ -13,10 +13,20 @@ var (
 		prometheus.HistogramOpts{
 			Namespace: namespace,
 			Subsystem: subsystem,
-			Buckets:   []float64{.1, 1, 10},
+			Buckets:   []float64{.001, .01, .1, 1, 5, 10},
 			Name:      "forward_duration_seconds",
 			Help:      "Forward samples to TSDB. latencies in seconds.",
 		}, []string{"url"},
+	)
+
+	ForwardKafkaDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: namespace,
+			Subsystem: subsystem,
+			Buckets:   []float64{.1, 1, 10},
+			Name:      "forward_kafka_duration_seconds",
+			Help:      "Forward samples to Kafka. latencies in seconds.",
+		}, []string{"brokers_topic"},
 	)
 
 	GaugeSampleQueueSize = prometheus.NewGaugeVec(
@@ -25,7 +35,7 @@ var (
 			Subsystem: subsystem,
 			Name:      "sample_queue_size",
 			Help:      "The size of sample queue.",
-		}, []string{"host_ident"},
+		}, []string{"queueid"},
 	)
 
 	CounterWirteTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -47,15 +57,24 @@ var (
 		Subsystem: subsystem,
 		Name:      "push_queue_error_total",
 		Help:      "Number of push queue error.",
-	}, []string{"host_ident"})
+	}, []string{"queueid"})
+
+	CounterPushQueueOverLimitTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: namespace,
+		Subsystem: subsystem,
+		Name:      "push_queue_over_limit_error_total",
+		Help:      "Number of push queue over limit.",
+	})
 )
 
 func init() {
 	prometheus.MustRegister(
 		ForwardDuration,
+		ForwardKafkaDuration,
 		CounterWirteTotal,
 		CounterWirteErrorTotal,
 		CounterPushQueueErrorTotal,
 		GaugeSampleQueueSize,
+		CounterPushQueueOverLimitTotal,
 	)
 }

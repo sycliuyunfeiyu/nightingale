@@ -36,6 +36,13 @@ const (
 	WecomMid     = "wecomMid"
 	Lark         = "lark"
 	LarkCard     = "larkcard"
+	FeishuApp         = "feishucard"
+	Discord           = "discord"
+	MattermostWebhook = "mattermostwebhook"
+	MattermostBot     = "mattermostbot"
+	SlackWebhook      = "slackwebhook"
+	SlackBot          = "slackbot"
+	Phone             = "phone"
 
 	DingtalkKey = "dingtalk_robot_token"
 	WecomKey    = "wecom_robot_token"
@@ -262,6 +269,10 @@ func (u *User) Del(ctx *ctx.Context) error {
 			return err
 		}
 
+		if err := tx.Where("username=?", u.Username).Delete(&UserToken{}).Error; err != nil {
+			return err
+		}
+
 		return nil
 	})
 }
@@ -353,7 +364,7 @@ func UsersGetByGroupIds(ctx *ctx.Context, groupIds []int64) ([]User, error) {
 	return users, nil
 }
 
-func InitRoot(ctx *ctx.Context) {
+func InitRoot(ctx *ctx.Context) bool {
 	user, err := UserGetByUsername(ctx, "root")
 	if err != nil {
 		fmt.Println("failed to query user root:", err)
@@ -361,12 +372,12 @@ func InitRoot(ctx *ctx.Context) {
 	}
 
 	if user == nil {
-		return
+		return false
 	}
 
 	if len(user.Password) > 31 {
 		// already done before
-		return
+		return false
 	}
 
 	newPass, err := CryptoPass(ctx, user.Password)
@@ -382,6 +393,7 @@ func InitRoot(ctx *ctx.Context) {
 	}
 
 	fmt.Println("root password init done")
+	return true
 }
 
 func reachLoginFailCount(ctx *ctx.Context, redisObj storage.Redis, username string, count int64) (bool, error) {
@@ -524,7 +536,7 @@ func UserTotal(ctx *ctx.Context, query string, stime, etime int64) (num int64, e
 }
 
 func UserGets(ctx *ctx.Context, query string, limit, offset int, stime, etime int64,
-	order string, desc bool) ([]User, error) {
+	order string, desc bool, usernames, phones, emails []string) ([]User, error) {
 
 	session := DB(ctx)
 
@@ -539,6 +551,18 @@ func UserGets(ctx *ctx.Context, query string, limit, offset int, stime, etime in
 	}
 
 	session = session.Order(order)
+
+	if len(usernames) > 0 {
+		session = session.Where("username in (?)", usernames)
+	}
+
+	if len(phones) > 0 {
+		session = session.Where("phone in (?)", phones)
+	}
+
+	if len(emails) > 0 {
+		session = session.Where("email in (?)", emails)
+	}
 
 	if query != "" {
 		q := "%" + query + "%"
@@ -808,6 +832,10 @@ func (u *User) BusiGroups(ctx *ctx.Context, limit int, query string, all ...bool
 			return lst, err
 		}
 
+		if t == nil {
+			return lst, nil
+		}
+
 		t.GroupIds, err = TargetGroupIdsGetByIdent(ctx, t.Ident)
 		if err != nil {
 			return nil, err
@@ -898,8 +926,11 @@ func (u *User) ExtractToken(key string) (string, bool) {
 	case Lark, LarkCard:
 		ret := gjson.GetBytes(bs, LarkKey)
 		return ret.String(), ret.Exists()
+	case Phone:
+		return u.Phone, u.Phone != ""
 	default:
-		return "", false
+		ret := gjson.GetBytes(bs, key)
+		return ret.String(), ret.Exists()
 	}
 }
 

@@ -2,7 +2,9 @@ package models
 
 import (
 	"encoding/json"
+	"math/rand"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -16,6 +18,7 @@ import (
 type Datasource struct {
 	Id             int64                  `json:"id"`
 	Name           string                 `json:"name"`
+	Identifier     string                 `json:"identifier"`
 	Description    string                 `json:"description"`
 	PluginId       int64                  `json:"plugin_id"`
 	PluginType     string                 `json:"plugin_type"`      // prometheus
@@ -50,6 +53,7 @@ type HTTP struct {
 	TLS                 TLS               `json:"tls"`
 	MaxIdleConnsPerHost int               `json:"max_idle_conns_per_host"`
 	Url                 string            `json:"url"`
+	Urls                []string          `json:"urls"`
 	Headers             map[string]string `json:"headers"`
 }
 
@@ -66,6 +70,49 @@ func (h HTTP) IsLoki() bool {
 	}
 
 	return false
+}
+
+func (h HTTP) GetUrls() []string {
+	var urls []string
+	if len(h.Urls) == 0 {
+		urls = []string{h.Url}
+	} else {
+		// 复制切片以避免修改原始数据
+		urls = make([]string, len(h.Urls))
+		copy(urls, h.Urls)
+	}
+
+	// 使用 Fisher-Yates 洗牌算法随机打乱顺序
+	for i := len(urls) - 1; i > 0; i-- {
+		j := rand.Intn(i + 1)
+		urls[i], urls[j] = urls[j], urls[i]
+	}
+
+	return urls
+}
+
+func (h HTTP) NewReq(reqUrl *string) (req *http.Request, err error) {
+	urls := h.GetUrls()
+	for i := 0; i < len(urls); i++ {
+		if req, err = http.NewRequest("GET", urls[i], nil); err == nil {
+			*reqUrl = urls[i]
+			return
+		}
+	}
+	return
+}
+
+func (h HTTP) ParseUrl() (target *url.URL, err error) {
+	urls := h.GetUrls()
+	if len(urls) == 0 {
+		return nil, errors.New("no urls")
+	}
+
+	target, err = url.Parse(urls[0])
+	if err != nil {
+		return nil, err
+	}
+	return
 }
 
 type TLS struct {
@@ -300,6 +347,10 @@ func (ds *Datasource) DB2FE() error {
 		ds.HTTPJson.MaxIdleConnsPerHost = 100
 	}
 
+	if ds.PluginType == ELASTICSEARCH && len(ds.HTTPJson.Urls) == 0 {
+		ds.HTTPJson.Urls = []string{ds.HTTPJson.Url}
+	}
+
 	if ds.Auth != "" {
 		err := json.Unmarshal([]byte(ds.Auth), &ds.AuthJson)
 		if err != nil {
@@ -336,12 +387,12 @@ func DatasourceGetMap(ctx *ctx.Context) (map[int64]*Datasource, error) {
 		}
 	}
 
-	ret := make(map[int64]*Datasource)
+	ds := make(map[int64]*Datasource)
 	for i := 0; i < len(lst); i++ {
-		ret[lst[i].Id] = lst[i]
+		ds[lst[i].Id] = lst[i]
 	}
 
-	return ret, nil
+	return ds, nil
 }
 
 func DatasourceStatistics(ctx *ctx.Context) (*Statistics, error) {

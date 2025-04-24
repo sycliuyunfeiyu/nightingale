@@ -9,6 +9,7 @@
 *.o
 *.a
 *.so
+*.db
 *.sw[po]
 *.tar.gz
 *.[568vq]
@@ -64,3 +65,7 @@ queries.active
 
 /n9e-*
 n9e.sql
+
+!/datasource
+
+.env.json

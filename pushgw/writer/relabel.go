@@ -37,6 +37,19 @@ func Process(labels []prompb.Label, cfgs ...*pconf.RelabelConfig) []prompb.Label
 	return labels
 }
 
+func Relabel(items []prompb.TimeSeries, rc []*pconf.RelabelConfig) []prompb.TimeSeries {
+	ritems := make([]prompb.TimeSeries, 0, len(items))
+	for _, item := range items {
+		lbls := Process(item.Labels, rc...)
+		if len(lbls) == 0 {
+			continue
+		}
+		item.Labels = lbls
+		ritems = append(ritems, item)
+	}
+	return ritems
+}
+
 func getValue(ls []prompb.Label, name model.LabelName) string {
 	for _, l := range ls {
 		if l.Name == string(name) {
@@ -154,6 +167,11 @@ func relabel(lset []prompb.Label, cfg *pconf.RelabelConfig) []prompb.Label {
 }
 
 func handleReplace(lb *LabelBuilder, regx *regexp.Regexp, cfg *pconf.RelabelConfig, val string, lset []prompb.Label) []prompb.Label {
+	// replace 如果没有 target_label，直接返回原标签
+	if len(cfg.TargetLabel) == 0 {
+		return lb.labels()
+	}
+
 	// 如果没有 source_labels，直接设置标签（新增标签）
 	if len(cfg.SourceLabels) == 0 {
 		lb.set(cfg.TargetLabel, cfg.Replacement)

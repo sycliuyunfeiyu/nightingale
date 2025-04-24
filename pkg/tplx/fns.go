@@ -1,6 +1,7 @@
 package tplx
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
@@ -27,10 +28,19 @@ type sample struct {
 	Value  float64
 }
 
-type queryResult []*sample
+type QueryFunc func(int64, string) model.Value
+
+var queryFunc QueryFunc
+
+// RegisterQueryFunc 为了避免循环引用，通过外部注入的方式注册 queryFunc
+func RegisterQueryFunc(f QueryFunc) {
+	queryFunc = f
+}
+
+type QueryResult []*sample
 
 type queryResultByLabelSorter struct {
-	results queryResult
+	results QueryResult
 	by      string
 }
 
@@ -416,7 +426,7 @@ func FormatDecimal(s string, n int) string {
 	return fmt.Sprintf(format, num)
 }
 
-func First(v queryResult) (*sample, error) {
+func First(v QueryResult) (*sample, error) {
 	if len(v) > 0 {
 		return v[0], nil
 	}
@@ -462,7 +472,7 @@ func TableLink(expr string) string {
 	return strutil.TableLinkForExpression(expr)
 }
 
-func SortByLabel(label string, v queryResult) queryResult {
+func SortByLabel(label string, v QueryResult) QueryResult {
 	sorter := queryResultByLabelSorter{v[:], label}
 	sort.Stable(sorter)
 	return v
@@ -563,4 +573,169 @@ func convertToFloat(i interface{}) (float64, error) {
 	default:
 		return 0, fmt.Errorf("can't convert %T to float", v)
 	}
+}
+
+func Query(datasourceID int64, promql string) model.Value {
+
+	value := queryFunc(datasourceID, promql)
+	if value != nil {
+		return value
+	}
+
+	return nil
+}
+
+// ConvertToQueryResult 将model.Value转换为queryResult
+func ConvertToQueryResult(value model.Value) QueryResult {
+	if value == nil {
+		return nil
+	}
+
+	var result QueryResult
+
+	switch value.Type() {
+	case model.ValVector:
+		items, ok := value.(model.Vector)
+		if !ok {
+			return nil
+		}
+
+		for _, item := range items {
+			if math.IsNaN(float64(item.Value)) {
+				continue
+			}
+
+			labels := make(map[string]string)
+			for k, v := range item.Metric {
+				labels[string(k)] = string(v)
+			}
+
+			result = append(result, &sample{
+				Labels: labels,
+				Value:  float64(item.Value),
+			})
+		}
+	case model.ValMatrix:
+		items, ok := value.(model.Matrix)
+		if !ok {
+			return nil
+		}
+
+		for _, item := range items {
+			if len(item.Values) == 0 {
+				continue
+			}
+
+			last := item.Values[len(item.Values)-1]
+			if math.IsNaN(float64(last.Value)) {
+				continue
+			}
+
+			labels := make(map[string]string)
+			for k, v := range item.Metric {
+				labels[string(k)] = string(v)
+			}
+
+			result = append(result, &sample{
+				Labels: labels,
+				Value:  float64(last.Value),
+			})
+		}
+	case model.ValScalar:
+		item, ok := value.(*model.Scalar)
+		if !ok {
+			return nil
+		}
+
+		if math.IsNaN(float64(item.Value)) {
+			return nil
+		}
+
+		result = append(result, &sample{
+			Labels: map[string]string{},
+			Value:  float64(item.Value),
+		})
+	default:
+		return nil
+	}
+
+	return result
+}
+
+func MappingAndJoin(arr interface{}, prefix, suffix, join string) string {
+	var result []string
+
+	switch v := arr.(type) {
+	case []int:
+		for _, item := range v {
+			result = append(result, fmt.Sprintf("%v", item))
+		}
+	case []string:
+		result = v
+	case []interface{}:
+		for _, item := range v {
+			result = append(result, fmt.Sprintf("%v", item))
+		}
+	}
+
+	var res []string
+	for _, s := range result {
+		if s == "" {
+			continue
+		}
+		res = append(res, prefix+s+suffix)
+	}
+
+	if len(res) == 0 {
+		return ""
+	}
+
+	return strings.Join(res, join)
+}
+
+func StrMappingAndJoin(str, split, prefix, suffix, join string) string {
+	arr := strings.Split(str, split)
+	return MappingAndJoin(arr, prefix, suffix, join)
+}
+
+func Ats(str string) string {
+	if strings.Contains(str, ",") {
+		arr := strings.Split(str, ",")
+		return MappingAndJoin(arr, "@", "", " ")
+	}
+
+	if strings.Contains(str, " ") {
+		arr := strings.Split(str, " ")
+		return MappingAndJoin(arr, "@", "", " ")
+	}
+	return str
+}
+
+// BatchContactsAts
+func BatchContactsAts(arr interface{}) string {
+	return MappingAndJoin(arr, "@", "", " ")
+}
+
+func BatchContactsJsonMarshal(arr interface{}) template.HTML {
+	return template.HTML("[" + MappingAndJoin(arr, "\"", "\"", ",") + "]")
+}
+
+func BatchContactsJoinComma(arr interface{}) string {
+	return MappingAndJoin(arr, "", "", ",")
+}
+
+func BatchContactsAtsInFeishuEmail(arr interface{}) template.HTML {
+	return template.HTML(MappingAndJoin(arr, "<at email=\\\"", "\\\"></at>", " "))
+}
+
+func BatchContactsAtsInFeishuId(arr interface{}) template.HTML {
+	return template.HTML(MappingAndJoin(arr, "<at id=\"", "\"></at>", " "))
+}
+
+func JsonMarshal(v interface{}) template.HTML {
+	json, err := json.Marshal(v)
+	if err != nil {
+		return template.HTML("")
+	}
+	return template.HTML(string(json))
 }

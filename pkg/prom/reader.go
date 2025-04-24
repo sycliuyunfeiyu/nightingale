@@ -397,7 +397,7 @@ type Metadata struct {
 }
 
 // queryResult contains result data for a query.
-type queryResult struct {
+type QueryResult struct {
 	Type   model.ValueType `json:"resultType"`
 	Result interface{}     `json:"result"`
 
@@ -510,7 +510,7 @@ func (r *RecordingRule) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-func (qr *queryResult) UnmarshalJSON(b []byte) error {
+func (qr *QueryResult) UnmarshalJSON(b []byte) error {
 	v := struct {
 		Type   model.ValueType `json:"resultType"`
 		Result json.RawMessage `json:"result"`
@@ -697,6 +697,28 @@ func (h *httpAPI) LabelValues(ctx context.Context, label string, matchs []string
 }
 
 func (h *httpAPI) Query(ctx context.Context, query string, ts time.Time) (model.Value, Warnings, error) {
+	var err error
+	var warnings Warnings
+	var value model.Value
+	var statusCode int
+
+	for i := 0; i < 1; i++ {
+		value, warnings, statusCode, err = h.query(ctx, query, ts)
+		if err == nil {
+			return value, warnings, nil
+		}
+
+		// statusCode 4xx do not retry
+		if statusCode >= 400 && statusCode < 500 {
+			return nil, warnings, err
+		}
+
+		time.Sleep(100 * time.Millisecond)
+	}
+	return nil, warnings, err
+}
+
+func (h *httpAPI) query(ctx context.Context, query string, ts time.Time) (model.Value, Warnings, int, error) {
 	u := h.client.URL(epQuery, nil)
 	q := u.Query()
 
@@ -707,15 +729,11 @@ func (h *httpAPI) Query(ctx context.Context, query string, ts time.Time) (model.
 
 	resp, body, warnings, err := h.client.DoGetFallback(ctx, u, q)
 	if err != nil {
-		return nil, warnings, err
+		return nil, warnings, 0, err
 	}
 
-	if resp.StatusCode > 200 {
-		fmt.Println("status code:", resp.StatusCode)
-	}
-
-	var qres queryResult
-	return model.Value(qres.v), warnings, json.Unmarshal(body, &qres)
+	var qres QueryResult
+	return model.Value(qres.v), warnings, resp.StatusCode, json.Unmarshal(body, &qres)
 }
 
 func (h *httpAPI) QueryRange(ctx context.Context, query string, r Range) (model.Value, Warnings, error) {
@@ -732,7 +750,7 @@ func (h *httpAPI) QueryRange(ctx context.Context, query string, r Range) (model.
 		return nil, warnings, err
 	}
 
-	var qres queryResult
+	var qres QueryResult
 
 	return qres.v, warnings, json.Unmarshal(body, &qres)
 }

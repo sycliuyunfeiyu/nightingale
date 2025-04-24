@@ -37,6 +37,7 @@ type Config struct {
 	APIForAgent      BasicAuths
 	APIForService    BasicAuths
 	RSA              RSAConfig
+	TokenAuth        TokenAuth
 }
 
 type RSAConfig struct {
@@ -68,12 +69,20 @@ type JWTAuth struct {
 	AccessExpired  int64
 	RefreshExpired int64
 	RedisKeyPrefix string
+	SingleLogin    bool
 }
 
-func GinEngine(mode string, cfg Config) *gin.Engine {
+type TokenAuth struct {
+	Enable             bool
+	HeaderUserTokenKey string
+}
+
+func GinEngine(mode string, cfg Config, printBodyPaths func() map[string]struct{},
+	printAccessLog func() bool) *gin.Engine {
 	gin.SetMode(mode)
 
-	loggerMid := aop.Logger(aop.LoggerConfig{PrintBody: cfg.PrintBody})
+	loggerMid := aop.Logger(aop.LoggerConfig{PrintAccessLog: printAccessLog,
+		PrintBodyPaths: printBodyPaths})
 	recoveryMid := aop.Recovery()
 
 	if strings.ToLower(mode) == "release" {
@@ -84,10 +93,7 @@ func GinEngine(mode string, cfg Config) *gin.Engine {
 
 	r.Use(recoveryMid)
 
-	// whether print access log
-	if cfg.PrintAccessLog {
-		r.Use(loggerMid)
-	}
+	r.Use(loggerMid)
 
 	if cfg.PProf {
 		pprof.Register(r, "/api/debug/pprof")

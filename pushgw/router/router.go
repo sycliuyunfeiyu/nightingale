@@ -1,6 +1,9 @@
 package router
 
 import (
+	"fmt"
+	"time"
+
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/prometheus/prompb"
 
@@ -28,6 +31,20 @@ type Router struct {
 	Ctx            *ctx.Context
 	HandleTS       HandleTSFunc
 	HeartbeartApi  string
+}
+
+func stat() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		start := time.Now()
+		c.Next()
+
+		code := fmt.Sprintf("%d", c.Writer.Status())
+		method := c.Request.Method
+		labels := []string{"pushgw", code, c.FullPath(), method}
+
+		RequestCounter.WithLabelValues(labels...).Inc()
+		RequestDuration.WithLabelValues(labels...).Observe(float64(time.Since(start).Seconds()))
+	}
 }
 
 func New(httpConfig httpx.Config, pushgw pconf.Pushgw, aconf aconf.Alert, tc *memsto.TargetCacheType, bg *memsto.BusiGroupCacheType,
@@ -59,8 +76,8 @@ func (rt *Router) Config(r *gin.Engine) {
 	}
 
 	registerMetrics()
-	go rt.ReportIdentStats()
 
+	r.Use(stat())
 	// datadog url: http://n9e-pushgw.foo.com/datadog
 	// use apiKey not basic auth
 	r.POST("/datadog/api/v1/series", rt.datadogSeries)
@@ -71,10 +88,19 @@ func (rt *Router) Config(r *gin.Engine) {
 
 	if len(rt.HTTP.APIForAgent.BasicAuth) > 0 {
 		// enable basic auth
-		auth := gin.BasicAuth(rt.HTTP.APIForAgent.BasicAuth)
+		accounts := make(gin.Accounts)
+		for username, password := range rt.HTTP.APIForAgent.BasicAuth {
+			accounts[username] = password
+		}
+		for username, password := range rt.HTTP.APIForService.BasicAuth {
+			accounts[username] = password
+		}
+
+		auth := gin.BasicAuth(accounts)
 		r.POST("/opentsdb/put", auth, rt.openTSDBPut)
 		r.POST("/openfalcon/push", auth, rt.falconPush)
 		r.POST("/prometheus/v1/write", auth, rt.remoteWrite)
+		r.POST("/proxy/v1/write", auth, rt.proxyRemoteWrite)
 		r.POST("/v1/n9e/edge/heartbeat", auth, rt.heartbeat)
 
 		if len(rt.Ctx.CenterApi.Addrs) > 0 {
@@ -85,6 +111,7 @@ func (rt *Router) Config(r *gin.Engine) {
 		r.POST("/opentsdb/put", rt.openTSDBPut)
 		r.POST("/openfalcon/push", rt.falconPush)
 		r.POST("/prometheus/v1/write", rt.remoteWrite)
+		r.POST("/proxy/v1/write", rt.proxyRemoteWrite)
 		r.POST("/v1/n9e/edge/heartbeat", rt.heartbeat)
 
 		if len(rt.Ctx.CenterApi.Addrs) > 0 {

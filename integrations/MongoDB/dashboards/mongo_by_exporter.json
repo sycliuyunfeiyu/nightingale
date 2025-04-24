@@ -1,13 +1,7 @@
 {
-    "id": 0,
-    "group_id": 0,
     "name": "MongoDB Overview by exporter",
-    "ident": "",
     "tags": "Prometheus MongoDB",
-    "create_at": 0,
-    "create_by": "",
-    "update_at": 0,
-    "update_by": "",
+    "ident": "",
     "configs": {
         "panels": [
             {
@@ -150,21 +144,7 @@
                 "version": "2.0.0"
             },
             {
-                "custom": {
-                    "drawStyle": "lines",
-                    "fillOpacity": 0.3,
-                    "gradientMode": "opacity",
-                    "lineInterpolation": "smooth",
-                    "lineWidth": 2,
-                    "scaleDistribution": {
-                        "type": "linear"
-                    },
-                    "spanNulls": false,
-                    "stack": "off"
-                },
-                "datasourceCate": "prometheus",
-                "datasourceValue": "${prom}",
-                "description": "Memory usage (MiB)",
+                "type": "timeseries",
                 "id": "8446dded-9e11-4ee9-bdad-769b193ddf3e",
                 "layout": {
                     "h": 7,
@@ -174,10 +154,37 @@
                     "x": 12,
                     "y": 1
                 },
+                "version": "3.0.0",
+                "datasourceCate": "prometheus",
+                "datasourceValue": "${prom}",
+                "targets": [
+                    {
+                        "expr": "mongodb_ss_mem_resident{instance='$instance'} * 1024 * 1024",
+                        "legend": "{{type}}",
+                        "refId": "A",
+                        "maxDataPoints": 240
+                    }
+                ],
+                "transformations": [
+                    {
+                        "id": "organize",
+                        "options": {}
+                    }
+                ],
                 "name": "Memory",
+                "description": "Memory usage (MiB)",
+                "maxPerRow": 4,
                 "options": {
+                    "tooltip": {
+                        "mode": "all",
+                        "sort": "desc"
+                    },
                     "legend": {
-                        "displayMode": "hidden"
+                        "displayMode": "hidden",
+                        "heightInPercentage": 30,
+                        "placement": "bottom",
+                        "behaviour": "showItem",
+                        "selectMode": "single"
                     },
                     "standardOptions": {
                         "util": "bytesIEC"
@@ -186,25 +193,36 @@
                         "steps": [
                             {
                                 "color": "#634CD9",
-                                "type": "base",
-                                "value": null
+                                "value": null,
+                                "type": "base"
                             }
                         ]
-                    },
-                    "tooltip": {
-                        "mode": "all",
-                        "sort": "desc"
                     }
                 },
-                "targets": [
+                "custom": {
+                    "drawStyle": "lines",
+                    "lineInterpolation": "smooth",
+                    "spanNulls": false,
+                    "lineWidth": 2,
+                    "fillOpacity": 0.3,
+                    "gradientMode": "opacity",
+                    "stack": "off",
+                    "scaleDistribution": {
+                        "type": "linear"
+                    },
+                    "showPoints": "none",
+                    "pointSize": 5
+                },
+                "overrides": [
                     {
-                        "expr": "mongodb_ss_mem_resident{cluster='$cluster'} * 1024 * 1024",
-                        "legend": "{{type}}",
-                        "refId": "A"
+                        "matcher": {
+                            "id": "byFrameRefID"
+                        },
+                        "properties": {
+                            "rightYAxisDisplay": "off"
+                        }
                     }
-                ],
-                "type": "timeseries",
-                "version": "2.0.0"
+                ]
             },
             {
                 "custom": {
@@ -571,21 +589,7 @@
                 "version": "2.0.0"
             },
             {
-                "custom": {
-                    "drawStyle": "lines",
-                    "fillOpacity": 0.3,
-                    "gradientMode": "opacity",
-                    "lineInterpolation": "smooth",
-                    "lineWidth": 2,
-                    "scaleDistribution": {
-                        "type": "linear"
-                    },
-                    "spanNulls": false,
-                    "stack": "off"
-                },
-                "datasourceCate": "prometheus",
-                "datasourceValue": "${prom}",
-                "description": "Number of document operations When used in combination with 'Command Operations', this graph can help identify write amplification. For example, when one insert or update command actually inserts or updates hundreds, thousands, or even millions of documents.",
+                "type": "timeseries",
                 "id": "7030d97a-d69f-4916-a415-ec57503ab1ed",
                 "layout": {
                     "h": 7,
@@ -595,52 +599,76 @@
                     "x": 12,
                     "y": 16
                 },
+                "version": "3.0.0",
+                "datasourceCate": "prometheus",
+                "datasourceValue": "${prom}",
+                "targets": [
+                    {
+                        "expr": "rate(mongodb_ss_metrics_document{instance=\"$instance\"}[5m])",
+                        "legend": "",
+                        "refId": "A",
+                        "maxDataPoints": 240
+                    }
+                ],
+                "transformations": [
+                    {
+                        "id": "organize",
+                        "options": {}
+                    }
+                ],
                 "name": "Document Operations",
+                "description": "Number of document operations When used in combination with 'Command Operations', this graph can help identify write amplification. For example, when one insert or update command actually inserts or updates hundreds, thousands, or even millions of documents.",
+                "maxPerRow": 4,
                 "options": {
+                    "tooltip": {
+                        "mode": "all",
+                        "sort": "none"
+                    },
                     "legend": {
-                        "displayMode": "hidden"
+                        "displayMode": "hidden",
+                        "heightInPercentage": 30,
+                        "placement": "bottom",
+                        "behaviour": "showItem",
+                        "selectMode": "single"
                     },
                     "standardOptions": {},
                     "thresholds": {
                         "steps": [
                             {
                                 "color": "#634CD9",
-                                "type": "base",
-                                "value": null
+                                "value": null,
+                                "type": "base"
                             }
                         ]
-                    },
-                    "tooltip": {
-                        "mode": "all",
-                        "sort": "none"
                     }
                 },
-                "targets": [
-                    {
-                        "expr": "rate(mongodb_ss_metric_document{instance=\"$instance\"}[5m])",
-                        "legend": "",
-                        "refId": "A"
-                    }
-                ],
-                "type": "timeseries",
-                "version": "2.0.0"
-            },
-            {
                 "custom": {
                     "drawStyle": "lines",
+                    "lineInterpolation": "smooth",
+                    "spanNulls": false,
+                    "lineWidth": 2,
                     "fillOpacity": 0.3,
                     "gradientMode": "opacity",
-                    "lineInterpolation": "smooth",
-                    "lineWidth": 2,
+                    "stack": "off",
                     "scaleDistribution": {
                         "type": "linear"
                     },
-                    "spanNulls": false,
-                    "stack": "off"
+                    "showPoints": "none",
+                    "pointSize": 5
                 },
-                "datasourceCate": "prometheus",
-                "datasourceValue": "${prom}",
-                "description": "Operation detail processing time (milliseconds)",
+                "overrides": [
+                    {
+                        "matcher": {
+                            "id": "byFrameRefID"
+                        },
+                        "properties": {
+                            "rightYAxisDisplay": "off"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "timeseries",
                 "id": "1c3b73d5-c25c-449f-995d-26acc9c621e1",
                 "layout": {
                     "h": 7,
@@ -650,10 +678,37 @@
                     "x": 0,
                     "y": 23
                 },
+                "version": "3.0.0",
+                "datasourceCate": "prometheus",
+                "datasourceValue": "${prom}",
+                "targets": [
+                    {
+                        "expr": "rate(mongodb_ss_opLatencies_latency{instance='$instance'}[5m]) / rate(mongodb_ss_opLatencies_latency{instance='$instance'}[5m]) / 1000",
+                        "legend": "{{op_type}}",
+                        "refId": "A",
+                        "maxDataPoints": 240
+                    }
+                ],
+                "transformations": [
+                    {
+                        "id": "organize",
+                        "options": {}
+                    }
+                ],
                 "name": "Response Time",
+                "description": "Operation detail processing time (milliseconds)",
+                "maxPerRow": 4,
                 "options": {
+                    "tooltip": {
+                        "mode": "all",
+                        "sort": "none"
+                    },
                     "legend": {
-                        "displayMode": "hidden"
+                        "displayMode": "hidden",
+                        "heightInPercentage": 30,
+                        "placement": "bottom",
+                        "behaviour": "showItem",
+                        "selectMode": "single"
                     },
                     "standardOptions": {
                         "util": "milliseconds"
@@ -662,25 +717,36 @@
                         "steps": [
                             {
                                 "color": "#634CD9",
-                                "type": "base",
-                                "value": null
+                                "value": null,
+                                "type": "base"
                             }
                         ]
-                    },
-                    "tooltip": {
-                        "mode": "all",
-                        "sort": "none"
                     }
                 },
-                "targets": [
+                "custom": {
+                    "drawStyle": "lines",
+                    "lineInterpolation": "smooth",
+                    "spanNulls": false,
+                    "lineWidth": 2,
+                    "fillOpacity": 0.3,
+                    "gradientMode": "opacity",
+                    "stack": "off",
+                    "scaleDistribution": {
+                        "type": "linear"
+                    },
+                    "showPoints": "none",
+                    "pointSize": 5
+                },
+                "overrides": [
                     {
-                        "expr": "rate(mongodb_ss_opLatencies_latency{cluster='$cluster'}[5m]) / rate(mongodb_ss_opLatencies_latency{cluster='$cluster'}[5m]) / 1000",
-                        "legend": "{{op_type}}",
-                        "refId": "A"
+                        "matcher": {
+                            "id": "byFrameRefID"
+                        },
+                        "properties": {
+                            "rightYAxisDisplay": "off"
+                        }
                     }
-                ],
-                "type": "timeseries",
-                "version": "2.0.0"
+                ]
             },
             {
                 "custom": {
@@ -815,21 +881,7 @@
                 "type": "row"
             },
             {
-                "custom": {
-                    "drawStyle": "lines",
-                    "fillOpacity": 0.3,
-                    "gradientMode": "opacity",
-                    "lineInterpolation": "smooth",
-                    "lineWidth": 2,
-                    "scaleDistribution": {
-                        "type": "linear"
-                    },
-                    "spanNulls": false,
-                    "stack": "off"
-                },
-                "datasourceCate": "prometheus",
-                "datasourceValue": "${prom}",
-                "description": "cache size (byte)",
+                "type": "timeseries",
                 "id": "bb0ae571-43a1-430b-8f63-256f6f1ebee6",
                 "layout": {
                     "h": 7,
@@ -839,10 +891,55 @@
                     "x": 0,
                     "y": 31
                 },
+                "version": "3.0.0",
+                "datasourceCate": "prometheus",
+                "datasourceValue": "${prom}",
+                "targets": [
+                    {
+                        "expr": "mongodb_ss_wt_cache_bytes_currently_in_the_cache{instance='$instance'}",
+                        "legend": "total",
+                        "refId": "A",
+                        "maxDataPoints": 240
+                    },
+                    {
+                        "expr": "mongodb_ss_wt_cache_tracked_dirty_bytes_in_the_cache{cluster='$cluster'}",
+                        "legend": "dirty",
+                        "refId": "B",
+                        "maxDataPoints": 240
+                    },
+                    {
+                        "expr": "mongodb_ss_wt_cache_tracked_bytes_belonging_to_internal_pages_in_the_cache{cluster='$cluster'}",
+                        "legend": "internal_pages",
+                        "refId": "C",
+                        "maxDataPoints": 240
+                    },
+                    {
+                        "expr": "mongodb_ss_wt_cache_tracked_bytes_belonging_to_leaf_pages_in_the_cache{cluster='$cluster'}",
+                        "legend": "leaf_pages",
+                        "refId": "D",
+                        "maxDataPoints": 240
+                    }
+                ],
+                "transformations": [
+                    {
+                        "id": "organize",
+                        "options": {}
+                    }
+                ],
                 "name": "Cache Size",
+                "description": "cache size (byte)",
+                "maxPerRow": 4,
                 "options": {
+                    "tooltip": {
+                        "mode": "all",
+                        "sort": "none"
+                    },
                     "legend": {
-                        "displayMode": "hidden"
+                        "displayMode": "hidden",
+                        "heightInPercentage": 30,
+                        "placement": "bottom",
+                        "behaviour": "showItem",
+                        "selectMode": "single"
                     },
                     "standardOptions": {
                         "util": "bytesIEC"
@@ -851,57 +948,39 @@
                         "steps": [
                             {
                                 "color": "#634CD9",
-                                "type": "base",
-                                "value": null
+                                "value": null,
+                                "type": "base"
                             }
                         ]
-                    },
-                    "tooltip": {
-                        "mode": "all",
-                        "sort": "none"
                     }
                 },
-                "targets": [
-                    {
-                        "expr": "mongodb_ss_wt_cache_bytes_currently_in_the_cache{cluster='$cluster'}",
-                        "legend": "total",
-                        "refId": "A"
-                    },
-                    {
-                        "expr": "mongodb_ss_wt_cache_tracked_dirty_bytes_in_the_cache{cluster='$cluster'}",
-                        "legend": "dirty",
-                        "refId": "B"
-                    },
-                    {
-                        "expr": "mongodb_ss_wt_cache_tracked_bytes_belonging_to_internal_pages_in_the_cache{cluster='$cluster'}",
-                        "legend": "internal_pages",
-                        "refId": "C"
-                    },
-                    {
-                        "expr": "mongodb_ss_wt_cache_tracked_bytes_belonging_to_leaf_pages_in_the_cache{cluster='$cluster'}",
-                        "legend": "leaf_pages",
-                        "refId": "D"
-                    }
-                ],
-                "type": "timeseries",
-                "version": "2.0.0"
-            },
-            {
                 "custom": {
                     "drawStyle": "lines",
+                    "lineInterpolation": "smooth",
+                    "spanNulls": false,
+                    "lineWidth": 2,
                     "fillOpacity": 0.3,
                     "gradientMode": "opacity",
-                    "lineInterpolation": "smooth",
-                    "lineWidth": 2,
+                    "stack": "off",
                     "scaleDistribution": {
                         "type": "linear"
                     },
-                    "spanNulls": false,
-                    "stack": "off"
+                    "showPoints": "none",
+                    "pointSize": 5
                 },
-                "datasourceCate": "prometheus",
-                "datasourceValue": "${prom}",
-                "description": "size of cached data written or read (in bytes)",
+                "overrides": [
+                    {
+                        "matcher": {
+                            "id": "byFrameRefID"
+                        },
+                        "properties": {
+                            "rightYAxisDisplay": "off"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "timeseries",
                 "id": "f1ffd169-2a1a-42bc-9647-0e6621be0fef",
                 "layout": {
                     "h": 7,
@@ -911,10 +990,43 @@
                     "x": 6,
                     "y": 31
                 },
+                "version": "3.0.0",
+                "datasourceCate": "prometheus",
+                "datasourceValue": "${prom}",
+                "targets": [
+                    {
+                        "expr": "rate(mongodb_ss_wt_cache_bytes_read_into_cache{instance='$instance'}[5m])",
+                        "legend": "read",
+                        "refId": "A",
+                        "maxDataPoints": 240
+                    },
+                    {
+                        "expr": "rate(mongodb_ss_wt_cache_bytes_written_from_cache{cluster='$cluster'}[5m])",
+                        "legend": "written",
+                        "refId": "B",
+                        "maxDataPoints": 240
+                    }
+                ],
+                "transformations": [
+                    {
+                        "id": "organize",
+                        "options": {}
+                    }
+                ],
                 "name": "Cache I/O",
+                "description": "size of cached data written or read (in bytes)",
+                "maxPerRow": 4,
                 "options": {
+                    "tooltip": {
+                        "mode": "all",
+                        "sort": "none"
+                    },
                     "legend": {
-                        "displayMode": "hidden"
+                        "displayMode": "hidden",
+                        "heightInPercentage": 30,
+                        "placement": "bottom",
+                        "behaviour": "showItem",
+                        "selectMode": "single"
                     },
                     "standardOptions": {
                         "util": "bytesSI"
@@ -923,47 +1035,39 @@
                         "steps": [
                             {
                                 "color": "#634CD9",
-                                "type": "base",
-                                "value": null
+                                "value": null,
+                                "type": "base"
                             }
                         ]
-                    },
-                    "tooltip": {
-                        "mode": "all",
-                        "sort": "none"
                     }
                 },
-                "targets": [
-                    {
-                        "expr": "rate(mongodb_ss_wt_cache_bytes_read_into_cache{cluster='$cluster'}[5m])",
-                        "legend": "read",
-                        "refId": "A"
-                    },
-                    {
-                        "expr": "rate(mongodb_ss_wt_cache_bytes_written_from_cache{cluster='$cluster'}[5m])",
-                        "legend": "written",
-                        "refId": "B"
-                    }
-                ],
-                "type": "timeseries",
-                "version": "2.0.0"
-            },
-            {
                 "custom": {
                     "drawStyle": "lines",
+                    "lineInterpolation": "smooth",
+                    "spanNulls": false,
+                    "lineWidth": 2,
                     "fillOpacity": 0.3,
                     "gradientMode": "opacity",
-                    "lineInterpolation": "smooth",
-                    "lineWidth": 2,
+                    "stack": "off",
                     "scaleDistribution": {
                         "type": "linear"
                     },
-                    "spanNulls": false,
-                    "stack": "off"
+                    "showPoints": "none",
+                    "pointSize": 5
                 },
-                "datasourceCate": "prometheus",
-                "datasourceValue": "${prom}",
-                "description": "",
+                "overrides": [
+                    {
+                        "matcher": {
+                            "id": "byFrameRefID"
+                        },
+                        "properties": {
+                            "rightYAxisDisplay": "off"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "timeseries",
                 "id": "43ee140d-ae6d-474a-9892-fa4743d7f97e",
                 "layout": {
                     "h": 7,
@@ -973,10 +1077,37 @@
                     "x": 12,
                     "y": 31
                 },
+                "version": "3.0.0",
+                "datasourceCate": "prometheus",
+                "datasourceValue": "${prom}",
+                "targets": [
+                    {
+                        "expr": "100 * sum(mongodb_ss_wt_cache_tracked_dirty_pages_in_the_cache{instance='$instance'}) / sum(mongodb_ss_wt_cache_pages_currently_held_in_the_cache{instance='$instance'})",
+                        "legend": "dirty rate",
+                        "refId": "A",
+                        "maxDataPoints": 240
+                    }
+                ],
+                "transformations": [
+                    {
+                        "id": "organize",
+                        "options": {}
+                    }
+                ],
                 "name": "Cache Dirty Pages Rate",
+                "description": "",
+                "maxPerRow": 4,
                 "options": {
+                    "tooltip": {
+                        "mode": "all",
+                        "sort": "none"
+                    },
                     "legend": {
-                        "displayMode": "hidden"
+                        "displayMode": "hidden",
+                        "heightInPercentage": 30,
+                        "placement": "bottom",
+                        "behaviour": "showItem",
+                        "selectMode": "single"
                     },
                     "standardOptions": {
                         "util": "percent"
@@ -985,42 +1116,39 @@
                         "steps": [
                             {
                                 "color": "#634CD9",
-                                "type": "base",
-                                "value": null
+                                "value": null,
+                                "type": "base"
                             }
                         ]
-                    },
-                    "tooltip": {
-                        "mode": "all",
-                        "sort": "none"
                     }
                 },
-                "targets": [
-                    {
-                        "expr": "100 * sum(mongodb_ss_wt_cache_tracked_dirty_pages_in_the_cache{cluster='$cluster'}) / sum(mongodb_ss_wt_cache_pages_currently_held_in_the_cache{cluster='$cluster'})",
-                        "legend": "dirty rate",
-                        "refId": "A"
-                    }
-                ],
-                "type": "timeseries",
-                "version": "2.0.0"
-            },
-            {
                 "custom": {
                     "drawStyle": "lines",
+                    "lineInterpolation": "smooth",
+                    "spanNulls": false,
+                    "lineWidth": 2,
                     "fillOpacity": 0.3,
                     "gradientMode": "opacity",
-                    "lineInterpolation": "smooth",
-                    "lineWidth": 2,
+                    "stack": "off",
                     "scaleDistribution": {
                         "type": "linear"
                     },
-                    "spanNulls": false,
-                    "stack": "off"
+                    "showPoints": "none",
+                    "pointSize": 5
                 },
-                "datasourceCate": "prometheus",
-                "datasourceValue": "${prom}",
-                "description": "",
+                "overrides": [
+                    {
+                        "matcher": {
+                            "id": "byFrameRefID"
+                        },
+                        "properties": {
+                            "rightYAxisDisplay": "off"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "timeseries",
                 "id": "1a22c31a-859a-400c-af2a-ae83c308d0f2",
                 "layout": {
                     "h": 7,
@@ -1030,35 +1158,73 @@
                     "x": 18,
                     "y": 31
                 },
+                "version": "3.0.0",
+                "datasourceCate": "prometheus",
+                "datasourceValue": "${prom}",
+                "targets": [
+                    {
+                        "expr": "rate(mongodb_mongod_wiredtiger_cache_evicted_total{instance='$instance'}[5m])",
+                        "legend": "evicted pages",
+                        "refId": "A",
+                        "maxDataPoints": 240
+                    }
+                ],
+                "transformations": [
+                    {
+                        "id": "organize",
+                        "options": {}
+                    }
+                ],
                 "name": "Cache Evicted Pages",
+                "description": "",
+                "maxPerRow": 4,
                 "options": {
+                    "tooltip": {
+                        "mode": "all",
+                        "sort": "none"
+                    },
                     "legend": {
-                        "displayMode": "hidden"
+                        "displayMode": "hidden",
+                        "heightInPercentage": 30,
+                        "placement": "bottom",
+                        "behaviour": "showItem",
+                        "selectMode": "single"
                     },
                     "standardOptions": {},
                     "thresholds": {
                         "steps": [
                             {
                                 "color": "#634CD9",
-                                "type": "base",
-                                "value": null
+                                "value": null,
+                                "type": "base"
                             }
                         ]
-                    },
-                    "tooltip": {
-                        "mode": "all",
-                        "sort": "none"
                     }
                 },
-                "targets": [
+                "custom": {
+                    "drawStyle": "lines",
+                    "lineInterpolation": "smooth",
+                    "spanNulls": false,
+                    "lineWidth": 2,
+                    "fillOpacity": 0.3,
+                    "gradientMode": "opacity",
+                    "stack": "off",
+                    "scaleDistribution": {
+                        "type": "linear"
+                    },
+                    "showPoints": "none",
+                    "pointSize": 5
+                },
+                "overrides": [
                     {
-                        "expr": "rate(mongodb_mongod_wiredtiger_cache_evicted_total{cluster='$cluster'}[5m])",
-                        "legend": "evicted pages",
-                        "refId": "A"
+                        "matcher": {
+                            "id": "byFrameRefID"
+                        },
+                        "properties": {
+                            "rightYAxisDisplay": "off"
+                        }
                     }
-                ],
-                "type": "timeseries",
-                "version": "2.0.0"
+                ]
             },
             {
                 "collapsed": true,
@@ -1204,10 +1370,5 @@
         ],
         "version": "3.0.0"
     },
-    "public": 0,
-    "public_cate": 0,
-    "bgids": null,
-    "built_in": 0,
-    "hide": 0,
     "uuid": 1717556328065329000
 }

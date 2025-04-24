@@ -54,9 +54,7 @@ func (fs *FeishuSender) CallBack(ctx CallBackContext) {
 		},
 	}
 
-	doSendAndRecord(ctx.Ctx, ctx.CallBackURL, ctx.CallBackURL, body, "callback",
-		ctx.Stats, ctx.Events[0])
-	ctx.Stats.AlertNotifyTotal.WithLabelValues("rule_callback").Inc()
+	doSendAndRecord(ctx.Ctx, ctx.CallBackURL, ctx.CallBackURL, body, "callback", ctx.Stats, ctx.Events)
 }
 
 func (fs *FeishuSender) Send(ctx MessageContext) {
@@ -78,7 +76,7 @@ func (fs *FeishuSender) Send(ctx MessageContext) {
 				IsAtAll:   false,
 			}
 		}
-		doSendAndRecord(ctx.Ctx, url, tokens[i], body, models.Feishu, ctx.Stats, ctx.Events[0])
+		doSendAndRecord(ctx.Ctx, url, tokens[i], body, models.Feishu, ctx.Stats, ctx.Events)
 	}
 }
 

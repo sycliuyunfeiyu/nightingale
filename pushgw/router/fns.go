@@ -20,6 +20,12 @@ func (rt *Router) AppendLabels(pt *prompb.TimeSeries, target *models.Target, bgC
 
 	for key, value := range target.TagsMap {
 		if index, has := labelKeys[key]; has {
+			// e.g. busigroup=cloud
+			if _, has := labelKeys[rt.Pushgw.BusiGroupLabelKey]; has {
+				// busigroup key already exists, skip
+				continue
+			}
+
 			// overwrite labels
 			if rt.Pushgw.LabelRewrite {
 				pt.Labels[index].Value = value
@@ -73,6 +79,10 @@ func (rt *Router) AppendLabels(pt *prompb.TimeSeries, target *models.Target, bgC
 // }
 
 func (rt *Router) debugSample(remoteAddr string, v *prompb.TimeSeries) {
+	if v == nil {
+		return
+	}
+
 	filter := rt.Pushgw.DebugSample
 	if len(filter) == 0 {
 		return
@@ -135,46 +145,18 @@ func matchSample(filterMap, sampleMap map[string]string) bool {
 	return true
 }
 
-func (rt *Router) ForwardByIdent(clientIP string, ident string, v *prompb.TimeSeries) {
+func (rt *Router) ForwardToQueue(clientIP string, queueid string, v *prompb.TimeSeries) error {
 	v = rt.BeforePush(clientIP, v)
 	if v == nil {
-		return
+		return nil
 	}
 
-	IdentStats.Increment(ident, 1)
 	if rt.DropSample(v) {
-		CounterDropSampleTotal.WithLabelValues(ident).Inc()
-		return
+		CounterDropSampleTotal.Inc()
+		return nil
 	}
 
-	count := IdentStats.Get(ident)
-	if count > rt.Pushgw.IdentDropThreshold {
-		CounterDropSampleTotal.WithLabelValues(ident).Inc()
-		return
-	}
-
-	rt.Writers.PushSample(ident, *v)
-}
-
-func (rt *Router) ForwardByMetric(clientIP string, metric string, v *prompb.TimeSeries) {
-	v = rt.BeforePush(clientIP, v)
-	if v == nil {
-		return
-	}
-
-	IdentStats.Increment(metric, 1)
-	if rt.DropSample(v) {
-		CounterDropSampleTotal.WithLabelValues(metric).Inc()
-		return
-	}
-
-	var hashkey string
-	if len(metric) >= 2 {
-		hashkey = metric[0:2]
-	} else {
-		hashkey = metric[0:1]
-	}
-	rt.Writers.PushSample(hashkey, *v)
+	return rt.Writers.PushSample(queueid, *v)
 }
 
 func (rt *Router) BeforePush(clientIP string, v *prompb.TimeSeries) *prompb.TimeSeries {

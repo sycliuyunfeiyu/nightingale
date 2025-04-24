@@ -12,6 +12,7 @@ import (
 	"gopkg.in/yaml.v2"
 
 	"github.com/ccfos/nightingale/v6/models"
+	"github.com/ccfos/nightingale/v6/pkg/strx"
 	"github.com/ccfos/nightingale/v6/pushgw/pconf"
 	"github.com/ccfos/nightingale/v6/pushgw/writer"
 
@@ -20,8 +21,9 @@ import (
 	"github.com/prometheus/prometheus/prompb"
 	"github.com/toolkits/pkg/ginx"
 	"github.com/toolkits/pkg/i18n"
-	"github.com/toolkits/pkg/str"
 )
+
+type AlertRuleModifyHookFunc func(ar *models.AlertRule)
 
 // Return all, front-end search and paging
 func (rt *Router) alertRuleGets(c *gin.Context) {
@@ -50,7 +52,7 @@ func getAlertCueEventTimeRange(c *gin.Context) (stime, etime int64) {
 }
 
 func (rt *Router) alertRuleGetsByGids(c *gin.Context) {
-	gids := str.IdsInt64(ginx.QueryStr(c, "gids", ""), ",")
+	gids := strx.IdsInt64ForAPI(ginx.QueryStr(c, "gids", ""), ",")
 	if len(gids) > 0 {
 		for _, gid := range gids {
 			rt.bgroCheck(c, gid)
@@ -77,6 +79,11 @@ func (rt *Router) alertRuleGetsByGids(c *gin.Context) {
 		for i := 0; i < len(ars); i++ {
 			ars[i].FillNotifyGroups(rt.Ctx, cache)
 			ars[i].FillSeverities()
+
+			if len(ars[i].DatasourceQueries) != 0 {
+				ars[i].DatasourceIdsJson = rt.DatasourceCache.GetIDsByDsCateAndQueries(ars[i].Cate, ars[i].DatasourceQueries)
+			}
+
 			rids = append(rids, ars[i].Id)
 			names = append(names, ars[i].UpdateBy)
 		}
@@ -123,6 +130,10 @@ func (rt *Router) alertRulesGetByService(c *gin.Context) {
 		cache := make(map[int64]*models.UserGroup)
 		for i := 0; i < len(ars); i++ {
 			ars[i].FillNotifyGroups(rt.Ctx, cache)
+
+			if len(ars[i].DatasourceQueries) != 0 {
+				ars[i].DatasourceIdsJson = rt.DatasourceCache.GetIDsByDsCateAndQueries(ars[i].Cate, ars[i].DatasourceQueries)
+			}
 		}
 	}
 	ginx.NewRender(c).Data(ars, err)
@@ -157,6 +168,14 @@ func (rt *Router) alertRuleAddByImport(c *gin.Context) {
 		ginx.Bomb(http.StatusBadRequest, "input json is empty")
 	}
 
+	for i := range lst {
+		if len(lst[i].DatasourceQueries) == 0 {
+			lst[i].DatasourceQueries = []models.DatasourceQuery{
+				models.DataSourceQueryAll,
+			}
+		}
+	}
+
 	bgid := ginx.UrlParamInt64(c, "id")
 	reterr := rt.alertRuleAdd(lst, username, bgid, c.GetHeader("X-Language"))
 
@@ -164,9 +183,9 @@ func (rt *Router) alertRuleAddByImport(c *gin.Context) {
 }
 
 type promRuleForm struct {
-	Payload       string  `json:"payload" binding:"required"`
-	DatasourceIds []int64 `json:"datasource_ids" binding:"required"`
-	Disabled      int     `json:"disabled" binding:"gte=0,lte=1"`
+	Payload           string                   `json:"payload" binding:"required"`
+	DatasourceQueries []models.DatasourceQuery `json:"datasource_queries" binding:"required"`
+	Disabled          int                      `json:"disabled" binding:"gte=0,lte=1"`
 }
 
 func (rt *Router) alertRuleAddByImportPromRule(c *gin.Context) {
@@ -185,7 +204,7 @@ func (rt *Router) alertRuleAddByImportPromRule(c *gin.Context) {
 		ginx.Bomb(http.StatusBadRequest, "input yaml is empty")
 	}
 
-	lst := models.DealPromGroup(pr.Groups, f.DatasourceIds, f.Disabled)
+	lst := models.DealPromGroup(pr.Groups, f.DatasourceQueries, f.Disabled)
 	username := c.MustGet("username").(string)
 	bgid := ginx.UrlParamInt64(c, "id")
 	ginx.NewRender(c).Data(rt.alertRuleAdd(lst, username, bgid, c.GetHeader("X-Language")), nil)
@@ -398,8 +417,27 @@ func (rt *Router) alertRulePutFields(c *gin.Context) {
 			}
 		}
 
+		if f.Action == "datasource_change" {
+			// 修改数据源
+			if datasourceQueries, has := f.Fields["datasource_queries"]; has {
+				bytes, err := json.Marshal(datasourceQueries)
+				ginx.Dangerous(err)
+				ginx.Dangerous(ar.UpdateFieldsMap(rt.Ctx, map[string]interface{}{"datasource_queries": bytes}))
+				continue
+			}
+		}
+
 		for k, v := range f.Fields {
-			ginx.Dangerous(ar.UpdateColumn(rt.Ctx, k, v))
+			// 检查 v 是否为各种切片类型
+			switch v.(type) {
+			case []interface{}, []int64, []int, []string:
+				// 将切片转换为 JSON 字符串
+				bytes, err := json.Marshal(v)
+				ginx.Dangerous(err)
+				ginx.Dangerous(ar.UpdateColumn(rt.Ctx, k, string(bytes)))
+			default:
+				ginx.Dangerous(ar.UpdateColumn(rt.Ctx, k, v))
+			}
 		}
 	}
 
@@ -417,9 +455,14 @@ func (rt *Router) alertRuleGet(c *gin.Context) {
 		return
 	}
 
+	if len(ar.DatasourceQueries) != 0 {
+		ar.DatasourceIdsJson = rt.DatasourceCache.GetIDsByDsCateAndQueries(ar.Cate, ar.DatasourceQueries)
+	}
+
 	err = ar.FillNotifyGroups(rt.Ctx, make(map[int64]*models.UserGroup))
 	ginx.Dangerous(err)
 
+	rt.AlertRuleModifyHook(ar)
 	ginx.NewRender(c).Data(ar, err)
 }
 
@@ -623,7 +666,7 @@ func (rt *Router) cloneToMachine(c *gin.Context) {
 			newRule.CreateAt = now
 			newRule.RuleConfig = alertRules[i].RuleConfig
 
-			exist, err := models.AlertRuleExists(rt.Ctx, 0, newRule.GroupId, newRule.DatasourceIdsJson, newRule.Name)
+			exist, err := models.AlertRuleExists(rt.Ctx, 0, newRule.GroupId, newRule.Name)
 			if err != nil {
 				errMsg[f.IdentList[j]] = err.Error()
 				continue
@@ -643,4 +686,50 @@ func (rt *Router) cloneToMachine(c *gin.Context) {
 	}
 
 	ginx.NewRender(c).Data(reterr, models.InsertAlertRule(rt.Ctx, newRules))
+}
+
+type alertBatchCloneForm struct {
+	RuleIds []int64 `json:"rule_ids"`
+	Bgids   []int64 `json:"bgids"`
+}
+
+// 批量克隆告警规则
+func (rt *Router) batchAlertRuleClone(c *gin.Context) {
+	me := c.MustGet("user").(*models.User)
+
+	var f alertBatchCloneForm
+	ginx.BindJSON(c, &f)
+
+	// 校验 bgids 操作权限
+	for _, bgid := range f.Bgids {
+		rt.bgrwCheck(c, bgid)
+	}
+
+	reterr := make(map[string]string, len(f.RuleIds))
+	lang := c.GetHeader("X-Language")
+
+	for _, arid := range f.RuleIds {
+		ar, err := models.AlertRuleGetById(rt.Ctx, arid)
+		for _, bgid := range f.Bgids {
+			// 为了让 bgid 和 arid 对应，将上面的 err 放到这里处理
+			if err != nil {
+				reterr[fmt.Sprintf("%d-%d", arid, bgid)] = i18n.Sprintf(lang, err.Error())
+				continue
+			}
+
+			if ar == nil {
+				reterr[fmt.Sprintf("%d-%d", arid, bgid)] = i18n.Sprintf(lang, "alert rule not found")
+				continue
+			}
+
+			newAr := ar.Clone(me.Username, bgid)
+			err = newAr.Add(rt.Ctx)
+			if err != nil {
+				reterr[fmt.Sprintf("%d-%d", arid, bgid)] = i18n.Sprintf(lang, err.Error())
+				continue
+			}
+		}
+	}
+
+	ginx.NewRender(c).Data(reterr, nil)
 }

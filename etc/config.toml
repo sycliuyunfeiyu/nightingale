@@ -42,15 +42,15 @@ WriteTimeout = 40
 IdleTimeout = 120
 
 [HTTP.ShowCaptcha]
-Enable = false 
+Enable = false
 
 [HTTP.APIForAgent]
-Enable = true 
+Enable = true
 # [HTTP.APIForAgent.BasicAuth]
 # user001 = "ccc26da7b9aba533cbb263a36c07dcc5"
 
 [HTTP.APIForService]
-Enable = true 
+Enable = false
 [HTTP.APIForService.BasicAuth]
 user001 = "ccc26da7b9aba533cbb263a36c07dcc5"
 
@@ -73,13 +73,14 @@ DefaultRoles = ["Standard"]
 OpenRSA = false
 
 [DB]
+# mysql postgres sqlite
+DBType = "sqlite"
 # postgres: host=%s port=%s user=%s dbname=%s password=%s sslmode=%s
 # postgres: DSN="host=127.0.0.1 port=5432 user=root dbname=n9e_v6 password=1234 sslmode=disable"
-DSN="root:Admin@123@tcp(127.0.0.1:3306)/n9e_v6?charset=utf8mb4&parseTime=True&loc=Local&allowNativePasswords=true"
+# mysql: DSN="root:1234@tcp(localhost:3306)/n9e_v6?charset=utf8mb4&parseTime=True&loc=Local"
+DSN = "n9e.db"
 # enable debug mode or not
 Debug = false
-# mysql postgres sqlite
-DBType = "mysql"
 # unit: s
 MaxLifetime = 7200
 # max open connections
@@ -97,8 +98,8 @@ Password = "Admin@123"
 # DB = 0
 # UseTLS = false
 # TLSMinVersion = "1.2"
-# standalone cluster sentinel
-RedisType = "standalone"
+# standalone cluster sentinel miniredis
+RedisType = "miniredis"
 # Mastername for sentinel type
 # MasterName = "mymaster"
 # SentinelUsername = ""
@@ -126,8 +127,6 @@ AlertDetail = true
 [Pushgw]
 # use target labels in database instead of in series
 LabelRewrite = true
-# # default busigroup key name
-# BusiGroupLabelKey = "busigroup"
 ForceUseServerTS = true
 
 # [Pushgw.DebugSample]
@@ -170,6 +169,18 @@ MaxIdleConnsPerHost = 100
 # Replacement = "$1:80"
 # TargetLabel = "__address__"
 
+# [[Pushgw.KafkaWriters]]
+# Brokers = ["127.0.0.1:9092"]
+# Topic = "n9e-metrics"
+# [Pushgw.KafkaWriters.SASL]
+# Enable = true
+# User = "admin"
+# Password = "admin"
+# Mechanism = "PLAIN"
+# Version = 1
+# Handshake = true
+# AuthIdentity = ""
+
 [Ibex]
-Enable = false
+Enable = true
 RPCListen = "0.0.0.0:20090"
